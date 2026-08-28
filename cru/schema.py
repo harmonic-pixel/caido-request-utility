@@ -8,8 +8,9 @@ produced it.
 """
 
 import sqlite3
+from collections.abc import Iterable, Sequence
 
-from pypika import Column, Query, Table
+from pypika import Column, Parameter, Query, Table
 
 import cru.field_decode
 import cru.sql_util
@@ -50,6 +51,14 @@ DECODE_MAP = (
 INSERT_COLUMNS = BASE_COLUMNS + tuple(dec for _src, dec in DECODE_MAP)
 
 _BASE_INDEX = {name: i for i, name in enumerate(BASE_COLUMNS)}
+
+# One prepared statement, reused for every row. Placeholders are qmark style,
+# which is what sqlite3 takes; swap it here if you point CRU at another driver.
+INSERT_QUERY = (
+    Query.into(REQUESTS_TABLE)
+    .columns(*INSERT_COLUMNS)
+    .insert(*[Parameter("?")] * len(INSERT_COLUMNS))
+)
 
 # index name -> column it covers
 _INDEXES = {
@@ -112,3 +121,12 @@ def create_requests_table(con: sqlite3.Connection) -> None:
             con,
             Query.create_index(name).on(REQUESTS_TABLE).columns(column).if_not_exists(),
         )
+
+
+def insert_rows(con: sqlite3.Connection, rows: Iterable[Sequence]) -> None:
+    """Insert BASE_COLUMNS row tuples, deriving the decoded companions.
+
+    Rows are streamed into a single prepared statement, so the caller can pass a
+    generator and never hold the whole batch in memory.
+    """
+    cru.sql_util.execute_many(con, INSERT_QUERY, (with_decoded(r) for r in rows))

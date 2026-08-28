@@ -1,4 +1,5 @@
 import sqlite3
+from collections.abc import Iterable, Sequence
 from typing import Any, Protocol, overload
 
 
@@ -43,3 +44,20 @@ def execute(
         data = res.fetchall()
     con.commit()
     return data
+
+
+def execute_many(
+    con: sqlite3.Connection, query: QueryT, rows: Iterable[Sequence[Any]]
+) -> None:
+    """Run one parameterised statement over many rows.
+
+    The values stay bound rather than being rendered into SQL text, so a bulk
+    insert is one prepared statement instead of one enormous query string.
+    `rows` may be a generator; it is consumed lazily.
+    """
+    if not isinstance(query, str):
+        query = query.get_sql()
+
+    cur = con.cursor()
+    cur.executemany(query, rows)
+    con.commit()

@@ -296,9 +296,6 @@ def import_burp(xml_path, db_path, replace=False, batch=1000):
     if replace:
         cru.schema.drop_requests_table(con)
     cru.schema.create_requests_table(con)
-    cols = cru.schema.INSERT_COLUMNS
-    placeholders = ",".join("?" * len(cols))
-    insert = f"INSERT INTO requests ({','.join(cols)}) VALUES ({placeholders})"
 
     total, skipped, buf = 0, 0, []
     for item in iter_items(xml_path):
@@ -306,15 +303,14 @@ def import_burp(xml_path, db_path, replace=False, batch=1000):
         if row is None:
             skipped += 1
             continue
-        buf.append(cru.schema.with_decoded(row))
+        buf.append(row)
         if len(buf) >= batch:
-            con.executemany(insert, buf)
+            cru.schema.insert_rows(con, buf)
             total += len(buf)
             buf.clear()
     if buf:
-        con.executemany(insert, buf)
+        cru.schema.insert_rows(con, buf)
         total += len(buf)
-    con.commit()
     con.close()
     return total, skipped
 

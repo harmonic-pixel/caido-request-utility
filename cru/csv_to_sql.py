@@ -2,21 +2,52 @@ import csv
 import sqlite3
 from base64 import b64decode
 from copy import deepcopy
-from itertools import batched
 from pathlib import Path
 from typing import Any
 
 from idox import Idox, Request, Response
-from pypika import Column, Query, Table
+from pypika import Column, Parameter, Query, Table
 
 import cru.schema
 import cru.sql_util
-from cru.schema import REQUESTS_TABLE
 
 RAW_REQUESTS_TABLE = Table("raw_requests")
 
 # Rows read from raw_requests per round trip when populating.
 PAGE_SIZE = 100
+
+# Columns of raw_requests, in Caido export order — the CSV's own column order.
+RAW_COLUMNS = (
+    "caido_request_id",
+    "host",
+    "method",
+    "path",
+    "length",
+    "port",
+    "raw",
+    "is_tls",
+    "query",
+    "file_extension",
+    "caido_source",
+    "alteration",
+    "edited",
+    "parent_id",
+    "created_at",
+    "caido_response_id",
+    "response_status_code",
+    "response_raw",
+    "response_length",
+    "response_alteration",
+    "response_edited",
+    "response_parent_id",
+    "response_created_at",
+)
+
+_RAW_INSERT_QUERY = (
+    Query.into(RAW_REQUESTS_TABLE)
+    .columns(*RAW_COLUMNS)
+    .insert(*[Parameter("?")] * len(RAW_COLUMNS))
+)
 
 
 def drop_raw_table(con: sqlite3.Connection) -> None:
@@ -66,37 +97,10 @@ def import_csv(con: sqlite3.Connection, csv_file: Path) -> None:
     csv.field_size_limit(10000000)
     with open(csv_file, "r", newline="") as f:
         reader = csv.reader(f)
-        next(reader)
-        for rows in batched(reader, n=1000):
-            query = Query.into(RAW_REQUESTS_TABLE).columns(
-                "caido_request_id",
-                "host",
-                "method",
-                "path",
-                "length",
-                "port",
-                "raw",
-                "is_tls",
-                "query",
-                "file_extension",
-                "caido_source",
-                "alteration",
-                "edited",
-                "parent_id",
-                "created_at",
-                "caido_response_id",
-                "response_status_code",
-                "response_raw",
-                "response_length",
-                "response_alteration",
-                "response_edited",
-                "response_parent_id",
-                "response_created_at",
-            )
-            for row in rows:
-                query = query.insert(*row)
-
-            cru.sql_util.execute(con, query)
+        next(reader)  # header
+        # executemany streams the reader, so the file never lands in memory and
+        # the values stay bound rather than rendered into one huge statement.
+        cru.sql_util.execute_many(con, _RAW_INSERT_QUERY, reader)
 
 
 def drop_request_table(con: sqlite3.Connection) -> None:
@@ -107,6 +111,30 @@ def drop_request_table(con: sqlite3.Connection) -> None:
 def create_request_table(con: sqlite3.Connection) -> None:
     """Creates a pretty requests table with nicer data"""
     cru.schema.create_requests_table(con)
+
+
+def _request_row(row: tuple[Any, ...]) -> tuple[Any, ...]:
+    """Turn one raw_requests row into a requests row, in BASE_COLUMNS order."""
+    request_model: Request = Idox.split_request(b64decode(f"{row[5]}==").decode())
+    response_model: Response = Idox.split_response(b64decode(f"{row[10]}==").decode())
+    return (
+        row[0],  # host
+        row[1],  # method
+        row[2],  # path
+        row[3],  # length
+        row[4],  # port
+        "; ,".join(f"{i[0]}={i[1]}" for i in request_model.cookies),
+        "\n".join(f"{k}: {v}" for k, v in request_model.headers.items()),
+        request_model.body,
+        row[6],  # is_tls
+        row[7],  # query
+        row[8],  # created_at
+        row[9],  # status code
+        "\n".join(f"{k}: {v}" for k, v in response_model.headers.items()),
+        response_model.body,
+        row[11],  # response length
+        row[12],  # response created at
+    )
 
 
 def populate_requests_table(con: sqlite3.Connection) -> None:
@@ -143,43 +171,7 @@ def populate_requests_table(con: sqlite3.Connection) -> None:
             break
         current_offset += len(requests)
 
-        insert_query = Query.into(REQUESTS_TABLE).columns(*cru.schema.INSERT_COLUMNS)
-        for row in requests:
-            request_model: Request = Idox.split_request(
-                b64decode(f"{row[5]}==").decode()
-            )
-            response_model: Response = Idox.split_response(
-                b64decode(f"{row[10]}==").decode()
-            )
-            cookies = "; ,".join(f"{i[0]}={i[1]}" for i in request_model.cookies)
-            headers = "\n".join(f"{k}: {v}" for k, v in request_model.headers.items())
-            response_headers = "\n".join(
-                f"{k}: {v}" for k, v in response_model.headers.items()
-            )
-            insert_query = insert_query.insert(
-                *cru.schema.with_decoded(
-                    (
-                        row[0],  # host
-                        row[1],  # method
-                        row[2],  # path
-                        row[3],  # length
-                        row[4],  # port
-                        cookies,
-                        headers,
-                        request_model.body,
-                        row[6],  # is_tls
-                        row[7],  # query
-                        row[8],  # created_at
-                        row[9],  # status code
-                        response_headers,
-                        response_model.body,
-                        row[11],  # response length
-                        row[12],  # response created at
-                    )
-                )
-            )
-
-        cru.sql_util.execute(con, query=insert_query)
+        cru.schema.insert_rows(con, (_request_row(row) for row in requests))
 
         if len(requests) < PAGE_SIZE:
             break
