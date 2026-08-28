@@ -143,6 +143,9 @@ skipped and counted); `<response>`, `<host>`, `<port>`, `<protocol>`,
 ## Idea Roadmap
 
 - Support for providing a scope for narrowing data aggregation
+- Broader test coverage
+- Tests against large sample data, on the order of 10k requests, to catch
+  paging and memory behaviour the small fixtures cannot
 
 *P.s. You should contribute ideas! If you have an idea of what to do with raw request data, open an issue.*
 
