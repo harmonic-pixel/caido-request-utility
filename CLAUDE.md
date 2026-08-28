@@ -32,7 +32,6 @@ Burp XML export ─(burp_to_sql.py)─┘
 | `tests/test_passive_scan.py` | pytest suite: positive+negative per check, encoding, importer, report. |
 | `tests/conftest.py` | Shared fixtures: `make_db` (in-memory corpus) and `run_check`. |
 | `CHECKS.md` | Per-check reference: what each catches, patterns, limits. Keep in sync. |
-| `EXPORTING.md` | How to produce the Burp XML export. |
 
 Everything named `make_*.py` is **throwaway scaffolding** used to
 build synthetic test DBs during development — not part of the product. Prefer
@@ -145,6 +144,7 @@ request-side probe only); everything is passive.
   the `--check` choices, add positive+negative test cases, and a `CHECKS.md`
   entry.
 - Don't reintroduce severity. Don't add carve/binary `.burp` parsing (the user
-  chose the XML export path; see EXPORTING.md).
+  chose the XML export path; see the "Importing from Burp" section of
+  README.md).
 - Prefer editing over new scaffolding scripts; the `make_*`/`add_*` files are not
   product.

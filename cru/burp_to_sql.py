@@ -10,8 +10,8 @@ unchanged on Burp data.
     python -m cru.passive_scan burp.db --check all
     python -m cru.report_html burp.db -o report.html
 
-See EXPORTING.md for how to produce the XML export from Burp (including from a
-saved .burp project file).
+See the "Importing from Burp" section of README.md for how to produce the XML
+export from Burp (including from a saved .burp project file).
 
 Notes:
 - Request/response headers are stored as newline-joined "Name: value" lines;
@@ -379,8 +379,8 @@ def import_burp(xml_path, db_path, replace=False, batch=1000):
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Import a Burp Suite 'Save items' XML export into the CRU "
-        "requests-table schema. See EXPORTING.md for how to produce "
-        "the export."
+        "requests-table schema. See README.md for how to produce the "
+        "export."
     )
     ap.add_argument("xml", help="Burp XML export (Proxy history / site map)")
     ap.add_argument(

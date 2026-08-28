@@ -24,11 +24,129 @@ if __name__ == "__main__":
 
 Technically this is SQL agnostic, just override `cru.sql_util.execute` to use your DB specific execution logic.
 
+## Passive scanning
+
+Once traffic is in the `requests` table, `cru.passive_scan` runs 24 pattern
+checks over it and reports what looks worth a closer look. It is **passive**: it
+reads the corpus and sends no traffic of its own, so every finding is a lead to
+confirm by hand against a system you are authorised to test.
+
+```
+Caido export ──(csv_to_sql)──┐
+                             ├─► requests table ─► passive_scan ─► findings ─► report_html
+Burp XML export ─(burp_to_sql)─┘
+```
+
+```bash
+python -m cru.passive_scan corpus.db --check all         # every check
+python -m cru.passive_scan corpus.db --check sqli --json # one check, JSON out
+python -m cru.passive_scan corpus.db --show-secrets      # unredact secret matches
+python -m cru.report_html corpus.db -o report.html       # JSON + self-contained HTML
+python -m cru.idor_finder corpus.db                      # IDOR candidates (separate tool)
+```
+
+Findings are grouped by check and are not ranked by severity. The HTML report is
+a single self-contained file that builds every finding value through
+`textContent`, so it cannot be XSS'd by the payloads it displays.
+
+### The checks
+
+| Check | Catches |
+|-------|---------|
+| `deser` | Serialized objects and gadget markers — PHP, Java, .NET, Ruby, pickle, YAML tags |
+| `secrets` | Vendor API keys and tokens, private keys, plus a high-entropy sweep |
+| `sqli` | DBMS errors in responses, and SQLi-shaped payloads escalated by an error or 5xx |
+| `ssti` | Template-expression syntax in request inputs, tagged by templating style |
+| `code` | Fields carrying source or shell commands, JNDI/Log4Shell lookups |
+| `srcleak` | Server-side source, `.env`/`web.config` credentials, `.git` metadata in responses |
+| `xss` | XSS payload vectors, and parameter values reflected back unencoded |
+| `xxe` | External and parameter entities, stream wrappers, and file-read tells |
+| `ssrf` | Cloud metadata endpoints and internal hosts in server-fetch parameters |
+| `redirect` | Offsite URLs in redirect params, confirmed against a 3xx `Location` |
+| `traversal` | `../` sequences and absolute-path markers, escalated when a file comes back |
+| `crlf` | CR/LF and overlong-UTF8 sequences in request inputs (request-side probe only) |
+| `nosqli` | MongoDB operators as JSON keys or bracketed parameters |
+| `upload` | Executable, double, and markup extensions in multipart filenames |
+| `headers` | Missing or weak CSP, HSTS, frame protection, nosniff, referrer/permissions policy |
+| `cors` | Wildcard with credentials, `null` origin, credentialed origin reflection |
+| `cookies` | `Set-Cookie` missing HttpOnly, Secure, or SameSite |
+| `jwt` | `alg=none`, empty signatures, tokens with no expiry |
+| `infoleak` | Stack traces, debug pages, directory listings, GraphQL introspection |
+| `fingerprint` | Version banners and framework session-cookie names |
+| `methods` | `PUT`, `DELETE`, `TRACE`, `CONNECT`, `PATCH`, `TRACK` observed in traffic |
+| `mixedcontent` | `http://` sub-resources referenced from an HTTPS page |
+| `cleartext` | Credentials, cookies, or `Authorization` sent over plain HTTP |
+| `csrf` | State-changing cookie-authenticated requests with no visible CSRF token |
+
+[**CHECKS.md**](CHECKS.md) has the full reference: what each check reads, its
+signatures, and where it stops — plus the corpus-wide limits that apply to all
+of them (duplicate headers collapse, fields and evidence truncate, and findings
+dedupe, so a finding count is not a request count).
+
+### Encoding coverage
+
+Payloads are often wrapped in base64 or hex to slip past a naive scan, so the
+importers decode each field once at load time into `query_decoded`,
+`body_decoded`, `cookies_decoded`, `headers_decoded` and
+`response_body_decoded`. Every check sees those as extra `#decoded` views, which
+is why a finding's location may read `request-body#decoded`.
+
+A database built before those columns existed still scans, just without that
+coverage. To add and backfill them in place:
+
+```bash
+python -m cru.add_decoded_columns your.db
+```
+
+## Importing from Burp
+
+`cru.burp_to_sql` reads a Burp Suite **"Save items"** XML export into the same
+`requests` schema, so everything above works on Burp data too.
+
+### Producing the export
+
+1. Go to **Proxy → HTTP history**, or **Target → Site map** for a crawled tree.
+2. Filter first — set your scope and apply "Show only in-scope items", or filter
+   by host. The export is a straight dump of what you select.
+3. Select the items you want; `Ctrl-A` selects all of them. **"Save items" acts
+   on the current selection**, so selecting nothing exports nothing.
+4. Right-click the selection → **Save items**, and save as `.xml`.
+5. Leave base64 encoding enabled (Burp's default). Raw request and response
+   bytes survive base64 intact; without it, binary bodies can be mangled.
+
+From a saved `.burp` project file, open the project in Burp first
+(**File → Open project**) and follow the same steps — the binary project format
+is not parsed.
+
+### Importing
+
+```bash
+python -m cru.burp_to_sql history.xml -o burp.db            # import
+python -m cru.burp_to_sql history.xml -o burp.db --replace  # drop existing table first
+```
+
+Items are streamed rather than loaded as one tree, so large exports do not need
+to fit in memory. Per `<item>`, `<request>` is required (items without one are
+skipped and counted); `<response>`, `<host>`, `<port>`, `<protocol>`,
+`<status>` and `<responselength>` are used when present.
+
+### Notes
+
+- **`pip install defusedxml`** before importing an export you did not produce
+  yourself. Without it the stdlib fallback rejects any `<!DOCTYPE>` or
+  `<!ENTITY>` outright — safe, but an export that legitimately contains a DTD
+  will fail to parse rather than being trusted.
+- **`pip install brotli`** if the target serves `Content-Encoding: br`, or those
+  response bodies stay compressed and unreadable to the checks. gzip and deflate
+  need nothing extra.
+- The export carries no timestamps, so `created_at` and `response_created_at`
+  are written as `0`.
+- The `*_decoded` columns are filled at import time, so a Burp-imported database
+  has encoding coverage from the start.
+
 ## Idea Roadmap
 
-- Output an HTML page with statistics such as hosts hit, unique routes, etc
 - Support for providing a scope for narrowing data aggregation
-- Generic insights such as security headers or extracting all observed content security policies to see if they are consistent
 
 *P.s. You should contribute ideas! If you have an idea of what to do with raw request data, open an issue.*
 
