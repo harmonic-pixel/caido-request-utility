@@ -1,5 +1,5 @@
 import sqlite3
-from typing import Any, overload, Protocol
+from typing import Any, Protocol, overload
 
 
 class GetSQL(Protocol):
