@@ -146,6 +146,9 @@ skipped and counted); `<response>`, `<host>`, `<port>`, `<protocol>`,
 - Broader test coverage
 - Tests against large sample data, on the order of 10k requests, to catch
   paging and memory behaviour the small fixtures cannot
+- Better base64/hex decoding: the current 16-character floor on candidate
+  tokens silently misses short wrapped payloads, so judge a candidate on the
+  entropy and printability of what it decodes to rather than on its length
 
 *P.s. You should contribute ideas! If you have an idea of what to do with raw request data, open an issue.*
 
