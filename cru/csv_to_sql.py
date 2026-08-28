@@ -9,6 +9,7 @@ from typing import Any
 from idox import Idox, Request, Response
 from pypika import Column, Query, Table
 
+import cru.field_decode
 import cru.sql_util
 
 RAW_REQUESTS_TABLE = Table("raw_requests")
@@ -124,6 +125,13 @@ def create_request_table(con: sqlite3.Connection) -> None:
             Column("response_body", "TEXT", nullable=True, default=None),
             Column("response_length", "INTEGER", nullable=True, default=None),
             Column("response_created_at", "INTEGER", nullable=True, default=None),
+            # base64/hex plaintext recovered from each field at populate time,
+            # so passive_scan sees wrapped payloads without decoding per row.
+            Column("query_decoded", "TEXT", nullable=True, default=None),
+            Column("body_decoded", "TEXT", nullable=True, default=None),
+            Column("cookies_decoded", "TEXT", nullable=True, default=None),
+            Column("headers_decoded", "TEXT", nullable=True, default=None),
+            Column("response_body_decoded", "TEXT", nullable=True, default=None),
         )
         .primary_key("id")
     )
@@ -215,6 +223,11 @@ def populate_requests_table(con: sqlite3.Connection) -> None:
             "response_body",
             "response_length",
             "response_created_at",
+            "query_decoded",
+            "body_decoded",
+            "cookies_decoded",
+            "headers_decoded",
+            "response_body_decoded",
         )
         for row in requests:
             request_model: Request = Idox.split_request(
@@ -223,23 +236,34 @@ def populate_requests_table(con: sqlite3.Connection) -> None:
             response_model: Response = Idox.split_response(
                 b64decode(f"{row[10]}==").decode()
             )
+            cookies = "; ,".join(f"{i[0]}={i[1]}" for i in request_model.cookies)
+            headers = "\n".join(f"{k}: {v}" for k, v in request_model.headers.items())
+            response_headers = "\n".join(
+                f"{k}: {v}" for k, v in response_model.headers.items()
+            )
+            decoded = cru.field_decode.decoded_view
             insert_query = insert_query.insert(
                 row[0],  # host
                 row[1],  # method
                 row[2],  # path
                 row[3],  # length
                 row[4],  # port
-                "; ,".join(f"{i[0]}={i[1]}" for i in request_model.cookies),
-                "\n".join(f"{k}: {v}" for k, v in request_model.headers.items()),
+                cookies,
+                headers,
                 request_model.body,
                 row[6],  # is_tls
                 row[7],  # query
                 row[8],  # created_at
                 row[9],  # status code
-                "\n".join(f"{k}: {v}" for k, v in response_model.headers.items()),
+                response_headers,
                 response_model.body,
                 row[11],  # response length
                 row[12],  # response created at
+                decoded(row[7]),  # query_decoded
+                decoded(request_model.body),  # body_decoded
+                decoded(cookies),  # cookies_decoded
+                decoded(headers),  # headers_decoded
+                decoded(response_model.body),  # response_body_decoded
             )
 
         cru.sql_util.execute(con, query=insert_query)

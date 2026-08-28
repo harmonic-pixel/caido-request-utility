@@ -91,8 +91,9 @@ importers decode each field once at load time into `query_decoded`,
 `response_body_decoded`. Every check sees those as extra `#decoded` views, which
 is why a finding's location may read `request-body#decoded`.
 
-A database built before those columns existed still scans, just without that
-coverage. To add and backfill them in place:
+Both import paths write these columns, so a freshly built database has the
+coverage already. A database built by an older CRU still scans, just without it
+— to add and backfill the columns in place:
 
 ```bash
 python -m cru.add_decoded_columns your.db
@@ -213,9 +214,18 @@ Definition:
      "response_body"        TEXT NULL,
      "response_length"      INTEGER NULL,
      "response_created_at"  INTEGER NULL,
+     "query_decoded"         TEXT NULL,
+     "body_decoded"          TEXT NULL,
+     "cookies_decoded"       TEXT NULL,
+     "headers_decoded"       TEXT NULL,
+     "response_body_decoded" TEXT NULL,
      PRIMARY KEY ("id")
   )  
 ```
+
+The `*_decoded` columns hold base64/hex plaintext recovered from the matching
+field at import time — see [Encoding coverage](#encoding-coverage).
+
 Indexes:
 ```sql
 CREATE INDEX IF NOT EXISTS request_created_at ON "requests"(created_at);

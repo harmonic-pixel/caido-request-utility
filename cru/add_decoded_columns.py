@@ -2,19 +2,12 @@
 add_decoded_columns.py — backfill base64/hex decoded columns on an existing DB.
 
 The Burp importer (burp_to_sql.py) writes the `*_decoded` columns at import time.
-For a database produced another way — e.g. by caido-request-utility before it
-knew about these columns — run this once to add and populate them in place, so
-passive_scan.py gets encoding coverage without a re-import.
+The CSV import path (csv_to_sql.py) writes them too, so a database built by a
+current CRU already has them. This is for one built by an older version, or by
+another tool: run it once to add and populate the columns in place, and
+passive_scan.py gains encoding coverage without a re-import.
 
     python -m cru.add_decoded_columns your.db
-
-To bake this into CRU itself, add the same five columns to its `requests`
-CREATE statement and, when populating each row, set:
-    query_decoded         = field_decode.decoded_view(query)
-    body_decoded          = field_decode.decoded_view(body)
-    cookies_decoded       = field_decode.decoded_view(cookies)
-    headers_decoded       = field_decode.decoded_view(headers)
-    response_body_decoded = field_decode.decoded_view(response_body)
 """
 
 from __future__ import annotations
