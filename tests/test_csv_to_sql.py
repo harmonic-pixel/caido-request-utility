@@ -17,8 +17,12 @@ pytest.importorskip("idox")
 _PAYLOAD = "<?php system(1); ?>"
 
 
-def _raw_request():
-    body = "d=" + base64.b64encode(_PAYLOAD.encode()).decode()
+def _raw_request(body=None):
+    body = (
+        body
+        if body is not None
+        else "d=" + base64.b64encode(_PAYLOAD.encode()).decode()
+    )
     return (
         f"POST /a?q=1 HTTP/1.1\r\n"
         f"Host: app.test\r\n"
@@ -51,6 +55,39 @@ def test_requests_table_has_decoded_columns(con):
         "headers_decoded",
         "response_body_decoded",
     } <= cols
+
+
+def _insert_raw(con, n):
+    for i in range(n):
+        con.execute(
+            "INSERT INTO raw_requests (caido_request_id, host, method, path,"
+            " length, port, raw, is_tls, query, edited, created_at,"
+            " response_status_code, response_raw, response_length,"
+            " response_created_at)"
+            " VALUES (?,'app.test','POST','/a',10,443,?,1,'q=1',0,0,200,?,2,0)",
+            (
+                i,
+                _b64_field(_raw_request(f"n={i}")),
+                _b64_field("HTTP/1.1 200 OK\r\n\r\nok"),
+            ),
+        )
+    con.commit()
+
+
+# PAGE_SIZE boundaries: an exact multiple must not drop or duplicate the last
+# page, and a short final page must still be written.
+@pytest.mark.parametrize("count", [0, 1, c2s.PAGE_SIZE, c2s.PAGE_SIZE + 1])
+def test_populate_pages_through_every_row(con, count):
+    c2s.create_raw_table(con)
+    c2s.create_request_table(con)
+    _insert_raw(con, count)
+
+    c2s.populate_requests_table(con)
+
+    assert con.execute("SELECT COUNT(*) FROM requests").fetchone()[0] == count
+    assert (
+        con.execute("SELECT COUNT(DISTINCT body) FROM requests").fetchone()[0] == count
+    )
 
 
 def test_populate_fills_decoded_columns(con):

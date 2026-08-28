@@ -15,6 +15,9 @@ from cru.schema import REQUESTS_TABLE
 
 RAW_REQUESTS_TABLE = Table("raw_requests")
 
+# Rows read from raw_requests per round trip when populating.
+PAGE_SIZE = 100
+
 
 def drop_raw_table(con: sqlite3.Connection) -> None:
     """Drops the raw requests table"""
@@ -126,18 +129,19 @@ def populate_requests_table(con: sqlite3.Connection) -> None:
             "response_created_at",
         )
         .orderby("id")
-        .limit(100)
+        .limit(PAGE_SIZE)
     )
-    has_next = True
     current_offset = 0
-    while has_next:
+    while True:
         query = deepcopy(base_query).offset(current_offset)
         requests: list[tuple[Any, ...]] = cru.sql_util.execute(
             con, query=query, single_result=False
         )  # ty:ignore[invalid-assignment]
-        has_next = requests and len(requests) == 100
-        if has_next:
-            current_offset += 100
+        # A short page is the last one; an empty page means the previous page
+        # ended exactly on the boundary. Either way there is nothing after it.
+        if not requests:
+            break
+        current_offset += len(requests)
 
         insert_query = Query.into(REQUESTS_TABLE).columns(*cru.schema.INSERT_COLUMNS)
         for row in requests:
@@ -176,6 +180,9 @@ def populate_requests_table(con: sqlite3.Connection) -> None:
             )
 
         cru.sql_util.execute(con, query=insert_query)
+
+        if len(requests) < PAGE_SIZE:
+            break
 
 
 def create_and_populate_from_csv(con: sqlite3.Connection, csv_file: Path) -> None:
