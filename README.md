@@ -91,13 +91,8 @@ importers decode each field once at load time into `query_decoded`,
 `response_body_decoded`. Every check sees those as extra `#decoded` views, which
 is why a finding's location may read `request-body#decoded`.
 
-Both import paths write these columns, so a freshly built database has the
-coverage already. A database built by an older CRU still scans, just without it
-— to add and backfill the columns in place:
-
-```bash
-python -m cru.add_decoded_columns your.db
-```
+Both import paths write these columns — they share one table definition in
+`cru/schema.py` — so any database CRU builds has the coverage already.
 
 ## Importing from Burp
 

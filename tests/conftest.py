@@ -10,6 +10,7 @@ import sqlite3
 
 import pytest
 
+import cru.schema
 from cru import field_decode
 from cru import passive_scan as ps
 
@@ -29,13 +30,7 @@ _BASE = (
 )
 
 # Which base columns get a decoded companion, and the companion's name.
-_DECODE_MAP = (
-    ("query", "query_decoded"),
-    ("body", "body_decoded"),
-    ("cookies", "cookies_decoded"),
-    ("headers", "headers_decoded"),
-    ("response_body", "response_body_decoded"),
-)
+_DECODE_MAP = cru.schema.DECODE_MAP
 
 _DEFAULTS = dict(
     host="app.test",

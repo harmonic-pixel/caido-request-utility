@@ -26,7 +26,7 @@ Burp XML export ─(burp_to_sql.py)─┘
 | `cru/passive_scan.py` | The scanner: 24 checks + the runner/CLI. The core. |
 | `cru/field_decode.py` | Shared base64/hex decoder. Importers call it at load time. |
 | `cru/burp_to_sql.py` | Import a Burp "Save items" XML export into the schema. |
-| `cru/add_decoded_columns.py` | Migrate an existing DB to add/backfill decoded columns. |
+| `cru/schema.py` | The `requests` table definition, shared by both importers. |
 | `cru/report_html.py` | Build the verbose JSON report + a self-contained HTML view from it. |
 | `cru/idor_finder.py` | Standalone IDOR-candidate finder (separate tool, own aggregation). |
 | `tests/test_passive_scan.py` | pytest suite: positive+negative per check, encoding, importer, report. |

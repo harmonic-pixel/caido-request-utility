@@ -14,6 +14,7 @@ See the "Importing from Burp" section of README.md for how to produce the XML
 export from Burp (including from a saved .burp project file).
 
 Notes:
+- The table definition is shared with the CSV import path; see cru/schema.py.
 - Request/response headers are stored as newline-joined "Name: value" lines;
   `cookies` holds the request Cookie header; `query` is the query string.
 - gzip/deflate (and brotli if the `brotli` module is installed) response bodies
@@ -35,7 +36,7 @@ import sqlite3
 import xml.etree.ElementTree as ET
 import zlib
 
-from cru import field_decode
+import cru.schema
 
 try:
     import brotli  # ty: ignore[unresolved-import]  # optional, for Content-Encoding: br
@@ -105,53 +106,6 @@ except ImportError:
                     yield ("end", done.pop(0))
         while done:
             yield ("end", done.pop(0))
-
-
-# The `*_decoded` columns hold base64/hex plaintext recovered from each field at
-# import time (see field_decode). Checks read these instead of decoding per-row,
-# so the work happens once. They extend the CRU schema; tools that don't know
-# about them simply ignore the extra columns.
-CREATE_SQL = """
-CREATE TABLE IF NOT EXISTS requests (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    host TEXT, method TEXT, path TEXT, length INTEGER, port INTEGER,
-    cookies TEXT, headers TEXT, body TEXT, is_tls BOOLEAN, query TEXT,
-    created_at INTEGER, response_status_code INTEGER, response_headers TEXT,
-    response_body TEXT, response_length INTEGER, response_created_at INTEGER,
-    query_decoded TEXT, body_decoded TEXT, cookies_decoded TEXT,
-    headers_decoded TEXT, response_body_decoded TEXT
-)
-"""
-
-_BASE_COLS = (
-    "host",
-    "method",
-    "path",
-    "length",
-    "port",
-    "cookies",
-    "headers",
-    "body",
-    "is_tls",
-    "query",
-    "created_at",
-    "response_status_code",
-    "response_headers",
-    "response_body",
-    "response_length",
-    "response_created_at",
-)
-
-# Which base columns get a decoded companion, and the companion's name.
-_DECODE_MAP = (
-    ("query", "query_decoded"),
-    ("body", "body_decoded"),
-    ("cookies", "cookies_decoded"),
-    ("headers", "headers_decoded"),
-    ("response_body", "response_body_decoded"),
-)
-
-_INSERT_COLS = _BASE_COLS + tuple(dec for _src, dec in _DECODE_MAP)
 
 
 # --------------------------------------------------------------------------- #
@@ -337,25 +291,14 @@ def iter_items(xml_path):
             el.clear()
 
 
-_BASE_INDEX = {name: i for i, name in enumerate(_BASE_COLS)}
-
-
-def _with_decoded(base_row):
-    """Append the *_decoded companion values to a base-column row tuple."""
-    decoded = tuple(
-        field_decode.decoded_view(base_row[_BASE_INDEX[src]])
-        for src, _dec in _DECODE_MAP
-    )
-    return tuple(base_row) + decoded
-
-
 def import_burp(xml_path, db_path, replace=False, batch=1000):
     con = sqlite3.connect(db_path)
     if replace:
-        con.execute("DROP TABLE IF EXISTS requests")
-    con.execute(CREATE_SQL)
-    placeholders = ",".join("?" * len(_INSERT_COLS))
-    insert = f"INSERT INTO requests ({','.join(_INSERT_COLS)}) VALUES ({placeholders})"
+        cru.schema.drop_requests_table(con)
+    cru.schema.create_requests_table(con)
+    cols = cru.schema.INSERT_COLUMNS
+    placeholders = ",".join("?" * len(cols))
+    insert = f"INSERT INTO requests ({','.join(cols)}) VALUES ({placeholders})"
 
     total, skipped, buf = 0, 0, []
     for item in iter_items(xml_path):
@@ -363,7 +306,7 @@ def import_burp(xml_path, db_path, replace=False, batch=1000):
         if row is None:
             skipped += 1
             continue
-        buf.append(_with_decoded(row))
+        buf.append(cru.schema.with_decoded(row))
         if len(buf) >= batch:
             con.executemany(insert, buf)
             total += len(buf)

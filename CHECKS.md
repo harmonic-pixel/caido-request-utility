@@ -43,10 +43,10 @@ Two limits worth knowing:
 
 - **One layer only.** `decoded_view` unwraps base64 *or* hex, not
   base64-of-hex-of-payload. A doubly-wrapped payload is invisible.
-- **Older databases lose it silently.** If the `*_decoded` columns are absent,
-  `load_rows` falls back to the base columns and no `#decoded` views are
-  produced — no error, just less coverage. Run `python -m cru.add_decoded_columns your.db`
-  to add and backfill them.
+- **A database without the columns loses it silently.** If the `*_decoded`
+  columns are absent, `load_rows` falls back to the base columns and no
+  `#decoded` views are produced — no error, just less coverage. Both CRU import
+  paths write them, so this only affects a corpus built by another tool.
 
 ### Corpus-wide limits
 
