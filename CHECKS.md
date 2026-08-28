@@ -115,9 +115,10 @@ tokens no detector knows about.
 
 ## `sqli` — SQL injection
 
-Correlates two independent signals in the same row.
+Correlates three independent signals in the same row.
 
-- **Reads:** `response_text` for errors; `request_inputs` for payloads.
+- **Reads:** `response_text` for errors; `request_inputs` for payloads;
+  `request_param_values` for parameter names.
 - **Signatures:** (a) DBMS error fingerprints for 6 families — MySQL/MariaDB,
   PostgreSQL, MSSQL, Oracle (`ORA-nnnnn`), SQLite, and generic JDBC/ODBC/DB2.
   A DB error reaching the client means input reached the query engine
@@ -125,13 +126,23 @@ Correlates two independent signals in the same row.
   inputs: tautology, `UNION SELECT`, quote-plus-comment terminator, stacked
   query, time-based (`sleep`/`pg_sleep`/`benchmark`/`waitfor delay`),
   error-based functions (`extractvalue`/`updatexml`), and quoted tautology.
-- **Correlation:** a payload plus a DB error, or a payload plus a 5xx, in the
-  same row is called out as "likely injectable" in the finding's note. A payload
-  with a clean 200 is reported as observed input only.
+  (c) parameter *names* that hand the caller part of the query, in two tiers
+  like the `code` check. `sink` is any name containing `sql` — which covers the
+  permutations as they appear in the wild: `sqlQuery`, `sql_query`, `sql-query`,
+  `SQLQuery`, `rawSql`, `execSQL`, `sqlStatement`. `clause` is a bare SQL clause
+  name — `where`, `whereClause`, `orderBy`, `sortBy`, `groupBy`, `having`,
+  `select`, `from`, `table`, `tableName` — meaning the query is composed from
+  caller input even when the value itself is not raw SQL.
+- **Correlation:** a payload or a query-composition parameter, plus a DB error
+  or a 5xx in the same row, is called out as "likely injectable" in the
+  finding's note. With a clean 200 it is reported as observed input only.
 - **Limits:** only the *first* matching error family is reported per row
   (the loop breaks). There is no timing data in the corpus, so blind and
   time-based SQLi produce no confirmation — a `sleep(5)` payload is flagged as
-  a payload, never as a hit.
+  a payload, never as a hit. The `clause` tier keys on the name alone, so a REST
+  API that legitimately exposes `orderBy` or `sortBy` for pagination will be
+  flagged; that is the point — the parameter is a query-composition surface —
+  but expect it on healthy endpoints too.
 
 ## `ssti` — server-side template injection
 

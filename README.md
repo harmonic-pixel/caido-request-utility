@@ -55,7 +55,7 @@ a single self-contained file that builds every finding value through
 |-------|---------|
 | `deser` | Serialized objects and gadget markers — PHP, Java, .NET, Ruby, pickle, YAML tags |
 | `secrets` | Vendor API keys and tokens, private keys, plus a high-entropy sweep |
-| `sqli` | DBMS errors in responses, and SQLi-shaped payloads escalated by an error or 5xx |
+| `sqli` | DBMS errors in responses, SQLi-shaped payloads, and parameter names like `sqlQuery` or `orderBy` that compose the query |
 | `ssti` | Template-expression syntax in request inputs, tagged by templating style |
 | `code` | Fields carrying source or shell commands, JNDI/Log4Shell lookups |
 | `srcleak` | Server-side source, `.env`/`web.config` credentials, `.git` metadata in responses |

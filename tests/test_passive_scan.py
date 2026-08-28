@@ -70,6 +70,10 @@ POSITIVE = {
             "sql-error-in-response",
         ),
         (dict(query="q=x' UNION SELECT a,b FROM users--"), "sqli-payload"),
+        # parameter names that advertise a query-composition sink
+        (dict(query="sqlQuery=SELECT+1"), "sqli-param:raw-sql-name (sink)"),
+        (dict(method="POST", body='{"sql_query":"select 1"}'), "(sink)"),
+        (dict(query="orderBy=name"), "sqli-param:clause-name (clause)"),
     ],
     "ssti": [
         (dict(query="q={{config.items()}}"), "template-syntax"),
@@ -241,7 +245,7 @@ POSITIVE = {
 NEGATIVE = {
     "deser": dict(method="POST", body="name=John&city=Wellington"),
     "secrets": dict(response_body='{"ok":true,"count":3}'),
-    "sqli": dict(query="q=coffee", response_body="Results for coffee"),
+    "sqli": dict(query="q=coffee&sort=name&id=7", response_body="Results for coffee"),
     "ssti": dict(query="q=hello world"),
     "code": dict(query="note=please review the system before importing data"),
     "srcleak": dict(path="/app.js", response_body="function f(){console.log('hi')}"),
@@ -392,6 +396,26 @@ def test_all_runner_covers_registered_checks():
     checks = ps.build_checks("all")
     assert sorted(c.name for c in checks) == ALL_CHECKS
     assert len(ALL_CHECKS) == 24
+
+
+@pytest.mark.parametrize(
+    "param",
+    ["sqlQuery", "sql_query", "sql-query", "SQLQuery", "rawSql", "execSQL"],
+)
+def test_sqli_flags_sql_parameter_name_permutations(param, run_check):
+    """Any casing or separator around "sql" in a parameter name is a sink."""
+    findings = run_check("sqli", [dict(query=f"{param}=SELECT+1")])
+    assert any(
+        "(sink)" in f.signature for f in findings
+    ), f"{param} not flagged as a raw SQL sink -> {sigs_of(findings)}"
+
+
+def test_sqli_param_name_alone_does_not_flag_ordinary_params(run_check):
+    """Names that merely look query-ish must not fire; only clause names do."""
+    findings = run_check(
+        "sqli", [dict(query="query=coffee&filter=new&search=x&columns=id,name")]
+    )
+    assert not any("sqli-param" in f.signature for f in findings), sigs_of(findings)
 
 
 def test_sqli_payload_escalation_is_high_note(run_check):

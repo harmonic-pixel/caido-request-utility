@@ -635,6 +635,25 @@ _SQLI_PAYLOAD_SIGS = [
     ("quote-tautology", re.compile(r"(?i)'\s*or\s+'[^']*'\s*=\s*'")),
 ]
 
+# Parameter *names* that hand the caller part of the query. Tiered like the code
+# check: `sink` is a name advertising raw SQL, `clause` is a bare SQL clause name
+# — the API composes its query from caller input even when the value is not raw
+# SQL. Matching "sql" anywhere in the name covers the permutations seen in the
+# wild: sqlQuery, sql_query, sql-query, SQLQuery, rawSql, execSQL, sqlStatement.
+# (family, tier, severity, regex over the parameter name)
+_SQL_PARAM_SIGS = [
+    ("raw-sql-name", "sink", "high", re.compile(r"(?i)sql")),
+    (
+        "clause-name",
+        "clause",
+        "medium",
+        re.compile(
+            r"(?i)^(?:where|where[_-]?clause|order[_-]?by|orderby|sort[_-]?by|"
+            r"group[_-]?by|groupby|having|select|from|table|table[_-]?name)$"
+        ),
+    ),
+]
+
 
 class SqliScanner:
     name = "sqli"
@@ -700,6 +719,49 @@ class SqliScanner:
                             detail,
                         )
                     )
+
+            # (c) parameter names that advertise a query-composition sink,
+            #     escalated the same way.
+            for loc, val in request_param_values(r):
+                pname = loc.split(":")[-1]
+                for fam, tier, base_sev, rx in _SQL_PARAM_SIGS:
+                    if not rx.search(pname):
+                        continue
+                    if errored:
+                        sev, detail = "high", (
+                            f"query-composition parameter + {errored} error in "
+                            "same response — likely injectable"
+                        )
+                    elif status and status >= 500:
+                        sev, detail = "high", (
+                            "query-composition parameter + HTTP 5xx — likely "
+                            "injectable"
+                        )
+                    elif tier == "sink":
+                        sev, detail = base_sev, (
+                            "parameter name advertises a raw SQL sink — the "
+                            "caller supplies the query text"
+                        )
+                    else:
+                        sev, detail = base_sev, (
+                            "SQL clause name as a parameter — the query is "
+                            "composed from caller input"
+                        )
+                    out.append(
+                        Finding(
+                            self.name,
+                            sev,
+                            f"sqli-param:{fam} ({tier})",
+                            r["host"],
+                            r["method"],
+                            r["path"],
+                            loc,
+                            _snippet(val),
+                            detail,
+                        )
+                    )
+                    break
+
         return _dedupe(out)
 
 
