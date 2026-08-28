@@ -14,6 +14,9 @@ dependencies = [
 [dependency-groups]
 dev = [
     "black>=26.5.1",
+    "defusedxml>=0.7.1",
+    "pytest>=9.1.1",
+    "ruff>=0.16.5",
     "ty>=0.0.38",
 ]
 
@@ -30,3 +33,11 @@ include = ["cru"]
 
 [tool.hatch.build.targets.wheel]
 include = ["cru"]
+
+[tool.ruff.lint.per-file-ignores]
+# Row dicts are built from dict(...) kwargs on purpose: the row shape reads as
+# data that way. Literals would be noisier, not clearer.
+"tests/*.py" = ["C408"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

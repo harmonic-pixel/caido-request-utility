@@ -3,3 +3,4 @@
 test.db
 test.csv
 uv.lock
+__pycache__
