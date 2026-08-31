@@ -10,6 +10,7 @@ from cru.checks.base import (
     _snippet,
     request_inputs,
     request_param_values,
+    response_body,
 )
 
 #
@@ -65,7 +66,7 @@ class XssScanner:
     def run(self, rows):
         out = []
         for r in rows:
-            resp_body = r["response_body"] or ""
+            resp_body = response_body(r)
 
             # (1) payload vectors in request inputs
             for label, text in request_inputs(r):

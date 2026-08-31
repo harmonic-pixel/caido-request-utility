@@ -7,11 +7,16 @@ from cru.checks.base import (
     _b64url_json,
     _dedupe,
     _emit,
+    gate,
     jwt_claims,
     jwt_identity,
     request_inputs,
     response_text,
 )
+
+# Every JWT starts "eyJ" — the base64 of `{"`. Naming it lets a field with no
+# token in it skip the pattern entirely.
+_JWT = gate(JWT_RE.pattern, "eyj")
 
 
 class JwtScanner:
@@ -24,7 +29,7 @@ class JwtScanner:
             for label, text in list(request_inputs(r)) + [
                 ("response", response_text(r))
             ]:
-                for m in JWT_RE.finditer(text):
+                for m in _JWT.finditer(text):
                     tok = m.group(0)
                     if tok in seen:
                         continue

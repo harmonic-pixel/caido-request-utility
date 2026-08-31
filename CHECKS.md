@@ -74,6 +74,10 @@ repeat them.
   upstream, so repeated header lines (several `Set-Cookie`s, an injected second
   header) do not all survive into the corpus. Response-side confirmation of
   header injection is therefore unreliable — see `crlf` and `cookies`.
+- **Binary response bodies are not scanned.** A response whose `Content-Type`
+  is `image/*` (bar SVG), `video/*`, `audio/*` or `font/*` is stored as a lossy
+  text decode of its bytes, so nothing a check matches in it is real. The body
+  is skipped for every check; its headers and the request side still scan.
 - **Fields are truncated** at `_MAX_FIELD` = 400,000 bytes per field.
 - **Evidence is truncated** to 60 characters by `_snippet`, with a trailing `…`.
 - **Findings dedupe** on `(check, signature, host, path, location, evidence)`.

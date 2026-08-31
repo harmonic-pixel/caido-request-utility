@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import re
+from cru.checks.base import _dedupe, _emit, _header_map, gate, response_body
 
-from cru.checks.base import _dedupe, _emit, _header_map
-
-_MIXED = re.compile(r"(?i)(?:src|href|action)\s*=\s*[\"']http://[^\"']+")
+_MIXED = gate(r"(?i)(?:src|href|action)\s*=\s*[\"']http://[^\"']+", "http://")
 
 
 class MixedContentScanner:
@@ -20,7 +18,7 @@ class MixedContentScanner:
             ct = _header_map(r["response_headers"]).get("content-type", "").lower()
             if "text/html" not in ct:
                 continue
-            m = _MIXED.search(r["response_body"] or "")
+            m = _MIXED.search(response_body(r))
             if m:
                 _emit(
                     out,

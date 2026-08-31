@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import re
 
-from cru.checks.base import Finding, _dedupe, _snippet, _status, response_text
+from cru.checks.base import (
+    Finding,
+    _dedupe,
+    _snippet,
+    _status,
+    gate,
+    response_text,
+)
 
 #
 # Flags responses that return server-side source or config that should never
@@ -17,31 +24,31 @@ from cru.checks.base import Finding, _dedupe, _snippet, _status, response_text
 _SRCLEAK_SERVER_TAGS = [
     (
         "php-source",
-        re.compile(r"<\?php\b|<\?="),
+        gate(r"<\?php\b|<\?=", "<?php", "<?="),
         "high",
         "PHP open tag in response — PHP source returned unexecuted",
     ),
     (
         "jsp-source",
-        re.compile(r"<%@\s*page\b|<%!|<jsp:\w+"),
+        gate(r"<%@\s*page\b|<%!|<jsp:\w+", "<%", "<jsp:"),
         "high",
         "JSP directive/scriptlet in response — JSP source disclosure",
     ),
     (
         "asp-source",
-        re.compile(r"<%@\s*Page\b|\bResponse\.Write\b|<%#"),
+        gate(r"<%@\s*Page\b|\bResponse\.Write\b|<%#", "<%", "response.write"),
         "high",
         "ASP/ASP.NET directive in response — source disclosure",
     ),
     (
         "ssi-directive",
-        re.compile(r"<!--#\s*(?:exec|include|echo|config)\b"),
+        gate(r"<!--#\s*(?:exec|include|echo|config)\b", "<!--#"),
         "high",
         "Server-Side Include directive in response",
     ),
     (
         "erb-source",
-        re.compile(r"<%-?\s*=?\s*(?:@\w+|ERB\b|Rails\b|params\b)"),
+        gate(r"<%-?\s*=?\s*(?:@\w+|ERB\b|Rails\b|params\b)", "<%"),
         "medium",
         "ERB template source in response",
     ),
@@ -51,49 +58,73 @@ _SRCLEAK_SERVER_TAGS = [
 _SRCLEAK_SOURCE = [
     (
         "java-source",
-        re.compile(
+        gate(
             r"\bpackage\s+[\w.]+\s*;|\bimport\s+java\.[\w.]+;|"
-            r"public\s+static\s+void\s+main|@(?:RestController|Autowired|RequestMapping)\b"
+            r"public\s+static\s+void\s+main|@(?:RestController|Autowired|RequestMapping)\b",
+            "package",
+            "import java.",
+            "public",
+            "@restcontroller",
+            "@autowired",
+            "@requestmapping",
         ),
         "medium",
         "Java source constructs in response",
     ),
     (
         "python-source",
-        re.compile(
+        gate(
             r"if\s+__name__\s*==\s*['\"]__main__['\"]|def\s+__init__\s*\(\s*self\b|"
-            r"\bfrom\s+(?:flask|django|fastapi)\b"
+            r"\bfrom\s+(?:flask|django|fastapi)\b",
+            "__name__",
+            "__init__",
+            "flask",
+            "django",
+            "fastapi",
         ),
         "medium",
         "Python source constructs in response",
     ),
     (
         "php-source-constructs",
-        re.compile(
-            r"\brequire_once\b|\bnamespace\s+\w+\\|\buse\s+\w+\\[\w\\]+\s*;|\$this->\w+"
+        gate(
+            r"\brequire_once\b|\bnamespace\s+\w+\\|\buse\s+\w+\\[\w\\]+\s*;|\$this->\w+",
+            "require_once",
+            "namespace",
+            "use",
+            "$this->",
         ),
         "medium",
         "PHP source constructs in response",
     ),
     (
         "csharp-source",
-        re.compile(r"\busing\s+System(?:\.\w+)*\s*;|\[Http(?:Get|Post|Put|Delete)\]"),
+        gate(
+            r"\busing\s+System(?:\.\w+)*\s*;|\[Http(?:Get|Post|Put|Delete)\]",
+            "using system",
+            "[http",
+        ),
         "medium",
         "C# source constructs in response",
     ),
     (
         "node-source",
-        re.compile(
+        gate(
             r"\brequire\s*\(\s*['\"](?:express|koa|fastify|http|fs|mongoose|mysql|pg)['\"]\)|"
-            r"\bapp\.listen\s*\("
+            r"\bapp\.listen\s*\(",
+            "require",
+            "app.listen",
         ),
         "review",
         "Node.js server source constructs in response",
     ),
     (
         "ruby-source",
-        re.compile(
-            r"<\s*ApplicationController\b|\bRails\.application\b|\bActiveRecord::Base\b"
+        gate(
+            r"<\s*ApplicationController\b|\bRails\.application\b|\bActiveRecord::Base\b",
+            "applicationcontroller",
+            "rails.application",
+            "activerecord::base",
         ),
         "medium",
         "Ruby/Rails source constructs in response",
@@ -104,37 +135,55 @@ _SRCLEAK_SOURCE = [
 _SRCLEAK_CONFIG = [
     (
         "dotenv",
-        re.compile(
+        gate(
             r"(?m)^\s*(?:DB_PASSWORD|DB_USERNAME|APP_KEY|APP_SECRET|SECRET_KEY|"
-            r"AWS_SECRET_ACCESS_KEY|DATABASE_URL|REDIS_URL|JWT_SECRET)\s*="
+            r"AWS_SECRET_ACCESS_KEY|DATABASE_URL|REDIS_URL|JWT_SECRET)\s*=",
+            "db_password",
+            "db_username",
+            "app_key",
+            "app_secret",
+            "secret_key",
+            "aws_secret_access_key",
+            "database_url",
+            "redis_url",
+            "jwt_secret",
         ),
         "high",
         ".env-style config with credentials returned in response",
     ),
     (
         "wp-config",
-        re.compile(
-            r"define\s*\(\s*['\"](?:DB_PASSWORD|DB_NAME|AUTH_KEY|SECURE_AUTH_KEY)['\"]"
+        gate(
+            r"define\s*\(\s*['\"](?:DB_PASSWORD|DB_NAME|AUTH_KEY|SECURE_AUTH_KEY)['\"]",
+            "db_password",
+            "db_name",
+            "auth_key",
         ),
         "high",
         "wp-config.php credentials returned in response",
     ),
     (
         "dotnet-config",
-        re.compile(r"<connectionStrings>|<machineKey\b"),
+        gate(
+            r"<connectionStrings>|<machineKey\b", "<connectionstrings>", "<machinekey"
+        ),
         "high",
         "web.config/app.config returned in response",
     ),
     (
         "django-settings",
-        re.compile(r"DATABASES\s*=\s*\{|SECRET_KEY\s*=\s*['\"]"),
+        gate(r"DATABASES\s*=\s*\{|SECRET_KEY\s*=\s*['\"]", "databases", "secret_key"),
         "high",
         "Django settings.py returned in response",
     ),
     (
         "php-config-array",
-        re.compile(
-            r"['\"](?:password|passwd|db_pass|secret)['\"]\s*=>\s*['\"][^'\"]+['\"]"
+        gate(
+            r"['\"](?:password|passwd|db_pass|secret)['\"]\s*=>\s*['\"][^'\"]+['\"]",
+            "password",
+            "passwd",
+            "db_pass",
+            "secret",
         ),
         "medium",
         "PHP config array with credentials in response",
@@ -145,14 +194,19 @@ _SRCLEAK_CONFIG = [
 _SRCLEAK_VCS = [
     (
         "git-metadata",
-        re.compile(r"ref:\s+refs/heads/|\[core\][\s\S]{0,40}repositoryformatversion"),
+        gate(
+            r"ref:\s+refs/heads/|\[core\][\s\S]{0,40}repositoryformatversion",
+            "refs/heads/",
+            "repositoryformatversion",
+        ),
         "high",
         ".git metadata returned in response",
     ),
 ]
 
-_SRCLEAK_SHEBANG = re.compile(
-    r"(?m)^#!\s*(?:\S*/)?(?:env\s+)?(?:python\d?|bash|sh|perl|ruby|node|php)\b"
+_SRCLEAK_SHEBANG = gate(
+    r"(?m)^#!\s*(?:\S*/)?(?:env\s+)?(?:python\d?|bash|sh|perl|ruby|node|php)\b",
+    "#!",
 )
 
 # Paths that should never be served (backups, dotfiles, VCS, dumps).

@@ -117,7 +117,29 @@ severity sorting.
 - `request_param_values(row)` → `(label, value)` per individual param, incl.
   nested JSON leaves. Use this when the parameter *name* matters.
 - `response_text(row)` → concatenated response headers+body.
+- `response_body(row)` → the response body, or `""` when its `Content-Type` says
+  binary (`image/*` bar SVG, `video/*`, `audio/*`, `font/*`). The corpus stores
+  a lossy text decode of those bytes, so scanning them buys noise at the price of
+  the corpus's images and fonts. `iter_fields`/`response_text` skip them too.
 - `_status(row)` → int status or None.
+
+### Pattern gating (what keeps a scan affordable)
+A scan costs **patterns × bytes**: one compiled pattern over a 15MB corpus is
+~0.2s whether it matches or not, and there are over a hundred of them across the
+checks. Searching that same corpus for a literal costs 0.01s. So a pattern table
+declares its patterns with `gate(pattern, *literals, flags=0)` from
+`cru.checks.base` instead of `re.compile`, naming the lowercase literals a match
+cannot happen without — **one per top-level alternative**, or the gate will hide
+real findings. `gate` returns a `search`/`finditer` drop-in, so call sites don't
+change. A pattern with nothing selective to name keeps `re.compile`; a weak
+literal (`use`, `return`) is honest, it just doesn't buy much.
+
+A leading `(?i)` is honoured, and if the pattern body is all lowercase the flag
+is dropped and matching moves to the folded text the gate already built — ~10x
+quicker — with the match read back out of the original so evidence keeps its
+case. That is why the SQL-error and PHP-error patterns are written in lowercase:
+under `(?i)` the source casing was decorative, and lowercase makes them fold.
+Write new case-insensitive patterns lowercase for the same reason.
 
 ### One schema, one insert path
 `cru/schema.py` owns the `requests` table — `BASE_COLUMNS`, `DECODE_MAP`,

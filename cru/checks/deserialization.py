@@ -2,82 +2,95 @@
 
 from __future__ import annotations
 
-import re
 from urllib.parse import unquote_plus
 
-from cru.checks.base import Finding, _dedupe, _snippet, b64_blobs, iter_fields
+from cru.checks.base import (
+    Finding,
+    _dedupe,
+    _snippet,
+    b64_blobs,
+    gate,
+    iter_fields,
+)
 
 # Raw-string signatures: (family, compiled regex, severity, detail)
 _DESER_STRING_SIGS = [
     (
         "php-serialized-object",
-        re.compile(r'O:\d+:"[^"]+":\d+:\{'),
+        gate(r'O:\d+:"[^"]+":\d+:\{', "o:"),
         "high",
         'PHP serialized object (O:len:"class":...) — insecure unserialize()/POP chain',
     ),
     (
         "php-serialized-array",
-        re.compile(r"a:\d+:\{[si]:\d+"),
+        gate(r"a:\d+:\{[si]:\d+", "a:"),
         "review",
         "PHP serialized array — often benign, but an unserialize() sink",
     ),
     (
         "phar-wrapper",
-        re.compile(r"phar://"),
+        gate(r"phar://", "phar://"),
         "high",
         "phar:// stream wrapper — PHAR deserialization",
     ),
     (
         "node-serialize-rce",
-        re.compile(r"_\$\$ND_FUNC\$\$_"),
+        gate(r"_\$\$ND_FUNC\$\$_", "nd_func"),
         "high",
         "node-serialize IIFE marker — RCE on unserialize()",
     ),
     (
         "java-xmldecoder",
-        re.compile(r"<(?:java|object\s+class=)", re.IGNORECASE),
+        gate(r"(?i)<(?:java|object\s+class=)", "<java", "<object"),
         "high",
         "Java XMLDecoder / bean XML — RCE via <object class=...>",
     ),
     (
         "jackson-fastjson-polymorphic",
-        re.compile(r'"@(?:type|class)"\s*:'),
+        gate(r'"@(?:type|class)"\s*:', '"@type"', '"@class"'),
         "high",
         "Polymorphic type hint (@type/@class) — Jackson/fastjson gadget vector",
     ),
     (
         "yaml-object-tag",
-        re.compile(r"!!?(?:python/object|ruby/object|javax\.|com\.|java\.)"),
+        gate(
+            r"!!?(?:python/object|ruby/object|javax\.|com\.|java\.)",
+            "!python/object",
+            "!ruby/object",
+            "!javax.",
+            "!com.",
+            "!java.",
+        ),
         "high",
         "YAML language/object tag — unsafe load() gadget",
     ),
     (
         "dotnet-viewstate-param",
-        re.compile(r"__VIEWSTATE=|__VIEWSTATEGENERATOR="),
+        gate(r"__VIEWSTATE=|__VIEWSTATEGENERATOR=", "__viewstate"),
         "medium",
         "ASP.NET __VIEWSTATE — check for missing MAC (ViewState deserialization)",
     ),
     (
         "java-serialized-b64",
-        re.compile(r"\brO0AB[A-Za-z0-9+/]"),
+        gate(r"\brO0AB[A-Za-z0-9+/]", "ro0ab"),
         "high",
         "Java serialized object, base64 (magic AC ED 00 05)",
     ),
     (
         "dotnet-binaryformatter-b64",
-        re.compile(r"AAEAAAD/////"),
+        gate(r"AAEAAAD/////", "aaeaaad/////"),
         "high",
         "..NET BinaryFormatter header, base64 (00 01 00 00 00 FF FF FF FF)",
     ),
     (
         "ruby-marshal-b64",
-        re.compile(r"\bBAh[A-Za-z0-9+/]{8,}"),
+        gate(r"\bBAh[A-Za-z0-9+/]{8,}", "bah"),
         "medium",
         "Ruby Marshal blob, base64 (magic 04 08)",
     ),
     (
         "java-serialized-content-type",
-        re.compile(r"application/x-java-serialized-object", re.IGNORECASE),
+        gate(r"(?i)application/x-java-serialized-object", "x-java-serialized-object"),
         "high",
         "Content-Type advertises a Java serialized object",
     ),

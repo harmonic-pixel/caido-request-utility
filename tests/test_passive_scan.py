@@ -1230,3 +1230,47 @@ def test_progress_is_silent_without_a_terminal(capsys):
     captured = capsys.readouterr()
     assert captured.err == ""
     assert captured.out == ""
+
+
+# --------------------------------------------------------------------------- #
+# Pattern gating and binary responses
+# --------------------------------------------------------------------------- #
+
+
+def test_gate_skips_the_pattern_when_its_literal_is_absent():
+    """The gate is the whole speed-up: no literal, no regex pass."""
+    from cru.checks.base import gate
+
+    rx = gate(r"\bAKIA[0-9A-Z]{16}\b", "akia")
+    assert rx.search("nothing here") is None
+    assert rx.search("AKIAABCDEFGHIJKLMNOP") is not None
+
+
+def test_gate_matches_case_insensitively_and_keeps_the_original_case():
+    """A folded pattern must still hand back evidence as it was written."""
+    from cru.checks.base import gate
+
+    rx = gate(r"(?i)secret:\s*(\w+)", "secret")
+    m = rx.search("Header\nSECRET: HunTer2\n")
+    assert m.group(0) == "SECRET: HunTer2"
+    assert m.group(1) == "HunTer2"
+    assert m.groups() == ("HunTer2",)
+
+
+def test_gate_keeps_the_flag_when_the_pattern_carries_uppercase():
+    """`MySQL` folded against lowercase text would match nothing."""
+    from cru.checks.base import gate
+
+    rx = gate(r"(?i)valid MySQL result", "mysql")
+    assert rx.search("valid mysql result") is not None
+    assert rx.search("VALID MYSQL RESULT") is not None
+
+
+def test_binary_response_bodies_are_not_scanned(run_check):
+    """A font's bytes decode to noise; no check should pay to read it."""
+    body = "AKIAABCDEFGHIJKLMNOP"
+    row = dict(response_headers="Content-Type: font/woff2", response_body=body)
+    assert run_check("secrets", [row]) == []
+
+    row["response_headers"] = "Content-Type: image/svg+xml"
+    assert run_check("secrets", [row]), "SVG is text, and still scans"

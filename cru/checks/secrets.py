@@ -12,6 +12,7 @@ from cru.checks.base import (
     JWT_RE,
     Finding,
     _dedupe,
+    gate,
     iter_fields,
     jwt_claims,
     jwt_identity,
@@ -23,53 +24,64 @@ from cru.checks.base import (
 _SECRET_DETECTORS = [
     (
         "aws-access-key-id",
-        re.compile(r"\b(?:AKIA|ASIA|AGPA|AIDA)[0-9A-Z]{16}\b"),
+        gate(
+            r"\b(?:AKIA|ASIA|AGPA|AIDA)[0-9A-Z]{16}\b", "akia", "asia", "agpa", "aida"
+        ),
         "high",
     ),
-    ("github-pat", re.compile(r"\bgh[pousr]_[0-9A-Za-z]{36}\b"), "high"),
-    ("github-fine-grained-pat", re.compile(r"\bgithub_pat_[0-9A-Za-z_]{82}\b"), "high"),
-    ("gitlab-pat", re.compile(r"\bglpat-[0-9A-Za-z_\-]{20}\b"), "high"),
-    ("slack-token", re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{10,64}\b"), "high"),
+    ("github-pat", gate(r"\bgh[pousr]_[0-9A-Za-z]{36}\b", "gh"), "high"),
+    (
+        "github-fine-grained-pat",
+        gate(r"\bgithub_pat_[0-9A-Za-z_]{82}\b", "github_pat_"),
+        "high",
+    ),
+    ("gitlab-pat", gate(r"\bglpat-[0-9A-Za-z_\-]{20}\b", "glpat-"), "high"),
+    ("slack-token", gate(r"\bxox[baprs]-[0-9A-Za-z-]{10,64}\b", "xox"), "high"),
     (
         "slack-webhook",
-        re.compile(r"https://hooks\.slack\.com/services/[A-Za-z0-9/]+"),
+        gate(r"https://hooks\.slack\.com/services/[A-Za-z0-9/]+", "hooks.slack.com"),
         "medium",
     ),
-    ("stripe-live-key", re.compile(r"\b[sr]k_live_[0-9A-Za-z]{20,}\b"), "high"),
-    ("stripe-test-key", re.compile(r"\b[sr]k_test_[0-9A-Za-z]{20,}\b"), "low"),
-    ("google-api-key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b"), "high"),
-    ("google-oauth-token", re.compile(r"\bya29\.[0-9A-Za-z_\-]{20,}"), "medium"),
+    ("stripe-live-key", gate(r"\b[sr]k_live_[0-9A-Za-z]{20,}\b", "k_live_"), "high"),
+    ("stripe-test-key", gate(r"\b[sr]k_test_[0-9A-Za-z]{20,}\b", "k_test_"), "low"),
+    ("google-api-key", gate(r"\bAIza[0-9A-Za-z_\-]{35}\b", "aiza"), "high"),
+    ("google-oauth-token", gate(r"\bya29\.[0-9A-Za-z_\-]{20,}", "ya29."), "medium"),
     (
         "openai-key",
-        re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_\-]{20,}T3BlbkFJ[A-Za-z0-9_\-]{20,}\b"),
+        gate(
+            r"\bsk-(?:proj-)?[A-Za-z0-9_\-]{20,}T3BlbkFJ[A-Za-z0-9_\-]{20,}\b",
+            "t3blbkfj",
+        ),
         "high",
     ),
-    ("anthropic-key", re.compile(r"\bsk-ant-[0-9A-Za-z_\-]{20,}\b"), "high"),
+    ("anthropic-key", gate(r"\bsk-ant-[0-9A-Za-z_\-]{20,}\b", "sk-ant-"), "high"),
     (
         "sendgrid-key",
-        re.compile(r"\bSG\.[0-9A-Za-z_\-]{22}\.[0-9A-Za-z_\-]{43}\b"),
+        gate(r"\bSG\.[0-9A-Za-z_\-]{22}\.[0-9A-Za-z_\-]{43}\b", "sg."),
         "high",
     ),
-    ("npm-token", re.compile(r"\bnpm_[0-9A-Za-z]{36}\b"), "high"),
-    ("twilio-api-key", re.compile(r"\bSK[0-9a-fA-F]{32}\b"), "medium"),
-    ("mailgun-key", re.compile(r"\bkey-[0-9a-f]{32}\b"), "medium"),
+    ("npm-token", gate(r"\bnpm_[0-9A-Za-z]{36}\b", "npm_"), "high"),
+    ("twilio-api-key", gate(r"\bSK[0-9a-fA-F]{32}\b", "sk"), "medium"),
+    ("mailgun-key", gate(r"\bkey-[0-9a-f]{32}\b", "key-"), "medium"),
     (
         "private-key-block",
         # The whole block, not just the opening marker: the evidence is what
         # gets masked, so matching the marker alone hid the label and left the
         # key material itself in plain sight. Falls back to the marker when the
         # end is missing (a truncated field), which is better than no finding.
-        re.compile(
+        gate(
             r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"
             r"[\s\S]{0,20000}?-----END [A-Z ]{0,40}PRIVATE KEY-----"
-            r"|-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"
+            r"|-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----",
+            "private key-----",
         ),
         "high",
     ),
     (
         "jwt",
-        re.compile(
-            r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"
+        gate(
+            r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b",
+            "eyj",
         ),
         "medium",
     ),
@@ -78,16 +90,22 @@ _SECRET_DETECTORS = [
         # Capture only the credential. The evidence is what gets redacted in the
         # output and masked in the report's message, and `Authorization: Basic`
         # is not the secret — blanking it just makes the request unreadable.
-        re.compile(r"(?i)authorization:\s*basic\s+([A-Za-z0-9+/=]{8,})"),
+        gate(r"(?i)authorization:\s*basic\s+([A-Za-z0-9+/=]{8,})", "basic"),
         "medium",
     ),
     # Generic assignment — noisy, so it's reported at review tier.
     (
         "generic-secret-assignment",
-        re.compile(
+        gate(
             r"(?i)(?:password|passwd|pwd|secret|api[_-]?key|access[_-]?token|"
             r"auth[_-]?token|client[_-]?secret|private[_-]?key)"
-            r"[\"'\s:=]{1,4}[\"']?([^\s\"'&;]{6,})"
+            r"[\"'\s:=]{1,4}[\"']?([^\s\"'&;]{6,})",
+            "password",
+            "passwd",
+            "pwd",
+            "secret",
+            "key",
+            "token",
         ),
         "review",
     ),

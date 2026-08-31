@@ -206,6 +206,143 @@ _DECODED_COL = {
 }
 
 
+# --------------------------------------------------------------------------- #
+# Pattern gating
+# --------------------------------------------------------------------------- #
+
+# A scan costs (patterns x bytes): one compiled pattern over a 15MB corpus is
+# ~0.2s whether or not it matches, and there are over a hundred of them. The
+# same corpus takes 0.01s to search for a literal, so naming the literal a
+# pattern cannot match without lets almost every field skip the regex entirely.
+
+_LOW_SRC: str | None = None
+_LOW: str | None = None
+
+
+def _lower(text):
+    """The lowercase twin of `text`, memoised, or None if folding shifts offsets.
+
+    Checks run their whole pattern table against one field before moving to the
+    next, so a single-entry memo hits every time after the first pattern.
+    `str.lower()` is length-preserving for everything but a handful of
+    codepoints (U+0130 folds to two characters); on those, offsets into the
+    folded text would point at the wrong place in the original, so the caller
+    is told to scan the text as it is.
+    """
+    global _LOW_SRC, _LOW
+    if text is not _LOW_SRC:
+        low = text.lower()
+        _LOW_SRC, _LOW = text, low if len(low) == len(text) else None
+    return _LOW
+
+
+class _FoldedMatch:
+    """A match found in the folded text, read back out of the original.
+
+    Evidence keeps the case it was written in, and the spans are the original's
+    because folding preserved every offset.
+    """
+
+    __slots__ = ("_m", "_text")
+
+    def __init__(self, m, text):
+        self._m, self._text = m, text
+
+    def group(self, i=0):
+        start, end = self._m.span(i)
+        return self._text[start:end] if start >= 0 else None
+
+    def groups(self):
+        return tuple(self.group(i) for i in range(1, self._m.re.groups + 1))
+
+    def span(self, i=0):
+        return self._m.span(i)
+
+    def start(self, i=0):
+        return self._m.start(i)
+
+    def end(self, i=0):
+        return self._m.end(i)
+
+
+class _Gated:
+    """A compiled pattern plus the literals it cannot match without."""
+
+    __slots__ = ("folded", "literals", "rx")
+
+    def __init__(self, pattern, literals, flags):
+        ci = pattern.startswith("(?i)")
+        self.rx = re.compile(pattern, flags | (re.IGNORECASE if ci else 0))
+        # Case-folded matching costs ~10x a plain pass, and the folded text is
+        # already built for the gate — so a case-insensitive pattern can drop
+        # its flag and match the folded text instead, with the evidence read
+        # back out of the original. Only when the pattern itself holds no
+        # uppercase: `MySQL` or `[A-Z]{16}` would find nothing in folded text.
+        # The test is deliberately blunt — `\S` lowercases to `\s`, so any
+        # pattern where case carries meaning simply keeps its flag.
+        body = pattern[4:] if ci else pattern
+        self.folded = re.compile(body, flags) if ci and body == body.lower() else None
+        self.literals = literals
+
+    @property
+    def pattern(self):
+        return self.rx.pattern
+
+    def _target(self, text):
+        """(haystack, pattern, folded) — haystack None when the gate rejects."""
+        low = _lower(text)
+        if low is None:
+            return text, self.rx, False
+        if self.literals and not any(lit in low for lit in self.literals):
+            return None, None, False
+        if self.folded is not None:
+            return low, self.folded, True
+        return text, self.rx, False
+
+    def search(self, text):
+        hay, rx, folded = self._target(text)
+        if hay is None:
+            return None
+        m = rx.search(hay)
+        return _FoldedMatch(m, text) if (m and folded) else m
+
+    def finditer(self, text):
+        hay, rx, folded = self._target(text)
+        if hay is None:
+            return iter(())
+        if not folded:
+            return rx.finditer(hay)
+        return (_FoldedMatch(m, text) for m in rx.finditer(hay))
+
+
+def gate(pattern, *literals, flags=0):
+    """Compile `pattern`, skipped on any text missing all of `literals`.
+
+    Give the literals in lowercase; they are matched case-insensitively, so a
+    case-sensitive pattern still gates (a lowercase-only literal lets through
+    text the pattern then rejects — slower, never wrong). Name literals that
+    every match must contain: one per top-level alternative, and none at all
+    for a pattern with nothing worth naming — `re.compile` still works there.
+    A leading `(?i)` is honoured, and matching moves to the folded text.
+    """
+    return _Gated(pattern, tuple(literals), flags)
+
+
+# Responses whose body is bytes: the corpus stores a lossy text decode of them,
+# so scanning costs their whole size and can only match noise. SVG is XML, and
+# the checks that read markup want it.
+_BINARY_CT = re.compile(r"(?im)^content-type:\s*(?:image/(?!svg)|video/|audio/|font/)")
+
+
+def _binary_response(row):
+    return bool(_BINARY_CT.search(row["response_headers"] or ""))
+
+
+def response_body(row):
+    """The response body, or "" when it is binary and not worth scanning."""
+    return "" if _binary_response(row) else (row["response_body"] or "")
+
+
 def _row_has(row, col):
     """True if the sqlite Row actually carries a column (older DBs may not)."""
     try:
@@ -273,8 +410,16 @@ def request_inputs(row):
 
 
 def iter_fields(row):
-    """Yield (label, text) per scannable field, plus its "#decoded"/"#json" views."""
+    """Yield (label, text) per scannable field, plus its "#decoded"/"#json" views.
+
+    A binary response body is skipped: it is stored as a lossy decode of the
+    bytes, so every check would pay for the corpus's images and fonts to match
+    noise in them.
+    """
+    binary = _binary_response(row)
     for label, col in _SCAN_FIELDS:
+        if binary and col == "response_body":
+            continue
         val = row[col]
         if val:
             text = val if isinstance(val, str) else str(val)
@@ -287,7 +432,10 @@ def iter_fields(row):
 def response_text(row):
     """Return concatenated response headers+body (for error/result matching)."""
     parts = []
+    binary = _binary_response(row)
     for _, col in _RESPONSE_FIELDS:
+        if binary and col == "response_body":
+            continue
         val = row[col]
         if val:
             parts.append(str(val)[:_MAX_FIELD])

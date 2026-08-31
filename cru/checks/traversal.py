@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
-import re
-
-from cru.checks.base import _dedupe, _emit, request_inputs
+from cru.checks.base import _dedupe, _emit, gate, request_inputs, response_body
 from cru.checks.xxe import _XXE_FILE_DISCLOSURE
 
-_TRAVERSAL_STRONG = re.compile(
+_TRAVERSAL_STRONG = gate(
     r"(?i)/etc/passwd|/etc/shadow|/etc/hosts|/proc/self/environ|boot\.ini|"
-    r"\\windows\\win\.ini|/windows/win\.ini|c:\\windows"
+    r"\\windows\\win\.ini|/windows/win\.ini|c:\\windows",
+    "/etc/",
+    "/proc/self/environ",
+    "boot.ini",
+    "win.ini",
+    "c:\\windows",
 )
-_TRAVERSAL_SEQ = re.compile(
-    r"(?:\.\.[\\/]){2,}|(?:%2e%2e[\\/%]){2,}|" r"\.\.%2f|\.\.%5c|%252e%252e"
+_TRAVERSAL_SEQ = gate(
+    r"(?:\.\.[\\/]){2,}|(?:%2e%2e[\\/%]){2,}|" r"\.\.%2f|\.\.%5c|%252e%252e",
+    "..",
+    "%2e%2e",
+    "%252e",
 )
 
 
@@ -22,7 +28,7 @@ class TraversalScanner:
     def run(self, rows):
         out = []
         for r in rows:
-            file_read = _XXE_FILE_DISCLOSURE.search(r["response_body"] or "")
+            file_read = _XXE_FILE_DISCLOSURE.search(response_body(r))
             for label, text in request_inputs(r):
                 m = _TRAVERSAL_STRONG.search(text)
                 sev = "high"

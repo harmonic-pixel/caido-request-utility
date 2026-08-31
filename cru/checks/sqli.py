@@ -9,6 +9,7 @@ from cru.checks.base import (
     _dedupe,
     _snippet,
     _status,
+    gate,
     request_inputs,
     request_param_values,
     response_text,
@@ -19,75 +20,112 @@ from cru.checks.base import (
 _SQL_ERROR_SIGS = [
     (
         "mysql",
-        re.compile(
-            r"SQL syntax.*MySQL|Warning.*\bmysqli?_|MySqlException|"
-            r"com\.mysql\.jdbc|MySQLSyntaxErrorException|valid MySQL result|"
-            r"check the manual that corresponds to your (?:MySQL|MariaDB)",
-            re.IGNORECASE,
+        gate(
+            r"(?i)sql syntax.*mysql|warning.*\bmysqli?_|mysqlexception|"
+            r"com\.mysql\.jdbc|mysqlsyntaxerrorexception|valid mysql result|"
+            r"check the manual that corresponds to your (?:mysql|mariadb)",
+            "mysql",
+            "check the manual",
         ),
     ),
     (
         "postgresql",
-        re.compile(
-            r"PostgreSQL.*ERROR|pg_(?:query|exec)\(\)|PG::\w*Error|"
-            r"unterminated quoted string at or near|org\.postgresql\.util\.PSQLException|"
+        gate(
+            r"(?i)postgresql.*error|pg_(?:query|exec)\(\)|pg::\w*error|"
+            r"unterminated quoted string at or near|org\.postgresql\.util\.psqlexception|"
             r"invalid input syntax for",
-            re.IGNORECASE,
+            "postgresql",
+            "pg_",
+            "pg::",
+            "unterminated quoted string",
+            "invalid input syntax for",
         ),
     ),
     (
         "mssql",
-        re.compile(
-            r"Unclosed quotation mark after the character string|"
-            r"Microsoft OLE DB Provider for SQL Server|Incorrect syntax near|"
-            r"System\.Data\.SqlClient\.SqlException|com\.microsoft\.sqlserver\.jdbc|"
-            r"\[SQL Server\]|SQLServer JDBC Driver|Unicode data in a Unicode-only",
-            re.IGNORECASE,
+        gate(
+            r"(?i)unclosed quotation mark after the character string|"
+            r"microsoft ole db provider for sql server|incorrect syntax near|"
+            r"system\.data\.sqlclient\.sqlexception|com\.microsoft\.sqlserver\.jdbc|"
+            r"\[sql server\]|sqlserver jdbc driver|unicode data in a unicode-only",
+            "unclosed quotation mark",
+            "microsoft ole db",
+            "incorrect syntax near",
+            "sqlclient",
+            "sqlserver",
+            "[sql server]",
+            "unicode data in a unicode-only",
         ),
     ),
     (
         "oracle",
-        re.compile(
-            r"\bORA-\d{5}\b|Oracle error|Oracle.*Driver|quoted string not properly terminated|"
-            r"oracle\.jdbc|OracleException",
-            re.IGNORECASE,
+        gate(
+            r"(?i)\bora-\d{5}\b|oracle error|oracle.*driver|"
+            r"quoted string not properly terminated|oracle\.jdbc|oracleexception",
+            "ora-",
+            "oracle",
+            "quoted string not properly terminated",
         ),
     ),
     (
         "sqlite",
-        re.compile(
-            r"SQLITE_ERROR|sqlite3?\.OperationalError|unrecognized token:|"
-            r"SQLite/JDBCDriver|\[SQLITE_ERROR\]|SQL logic error",
-            re.IGNORECASE,
+        gate(
+            r"(?i)sqlite_error|sqlite3?\.operationalerror|unrecognized token:|"
+            r"sqlite/jdbcdriver|\[sqlite_error\]|sql logic error",
+            "sqlite",
+            "unrecognized token:",
+            "sql logic error",
         ),
     ),
     (
         "generic-jdbc-odbc",
-        re.compile(
-            r"java\.sql\.SQL(?:Syntax)?(?:Error)?Exception|"
-            r"\[Microsoft\]\[ODBC|Microsoft JET Database Engine|DB2 SQL error|"
-            r"SQLSTATE\[",
-            re.IGNORECASE,
+        gate(
+            r"(?i)java\.sql\.sql(?:syntax)?(?:error)?exception|"
+            r"\[microsoft\]\[odbc|microsoft jet database engine|db2 sql error|"
+            r"sqlstate\[",
+            "java.sql.",
+            "[microsoft][odbc",
+            "jet database engine",
+            "db2 sql error",
+            "sqlstate[",
         ),
     ),
 ]
-
 # SQLi-shaped payloads observed in request inputs.
 _SQLI_PAYLOAD_SIGS = [
     ("tautology", re.compile(r"(?i)('|\b)(?:or|and)\b\s*'?\d+'?\s*=\s*'?\d+")),
-    ("union-select", re.compile(r"(?i)\bunion\b\s+(?:all\s+)?\bselect\b")),
+    ("union-select", gate(r"(?i)\bunion\b\s+(?:all\s+)?\bselect\b", "union")),
     ("comment-terminator", re.compile(r"(?:'|\")\s*(?:--|#|/\*)")),
     (
         "stacked-query",
-        re.compile(r"(?i);\s*(?:drop|insert|update|delete|select|exec)\b"),
+        gate(
+            r"(?i);\s*(?:drop|insert|update|delete|select|exec)\b",
+            "drop",
+            "insert",
+            "update",
+            "delete",
+            "select",
+            "exec",
+        ),
     ),
     (
         "time-based",
-        re.compile(r"(?i)\b(?:sleep|pg_sleep|benchmark)\s*\(|\bwaitfor\s+delay\b"),
+        gate(
+            r"(?i)\b(?:sleep|pg_sleep|benchmark)\s*\(|\bwaitfor\s+delay\b",
+            "sleep",
+            "benchmark",
+            "waitfor",
+        ),
     ),
     (
         "error-based-fn",
-        re.compile(r"(?i)\b(?:extractvalue|updatexml|exp|floor)\s*\(\s*"),
+        gate(
+            r"(?i)\b(?:extractvalue|updatexml|exp|floor)\s*\(\s*",
+            "extractvalue",
+            "updatexml",
+            "exp",
+            "floor",
+        ),
     ),
     ("quote-tautology", re.compile(r"(?i)'\s*or\s+'[^']*'\s*=\s*'")),
 ]
