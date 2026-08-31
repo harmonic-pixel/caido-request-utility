@@ -656,6 +656,37 @@ def test_report_points_at_the_message_the_evidence_came_from(tmp_path, make_db):
     assert '"tail":"zzz"' in pane[rec["match"][1] :]
 
 
+def test_idor_ids_are_listed_masked_and_bounded(tmp_path, make_db):
+    """The observed IDs get their own listing, and are not a way round masking.
+
+    idor_finder treats a hinted body parameter as an identifier whatever is in
+    it, so a bearer token lands in `ids` — it has to be masked like any other
+    secret, and truncated or the listing is unreadable.
+    """
+    from cru import report_html
+
+    db = tmp_path / "ids.db"
+    token = _jwt({"sub": "42"}) + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    con = make_db(
+        [
+            dict(path="/users/1", body=f"user_id=1&token={token}"),
+            dict(path="/users/2", body="user_id=2"),
+            dict(path="/users/3", body="user_id=3"),
+        ]
+    )
+    disk = sqlite3.connect(str(db))
+    con.backup(disk)
+    disk.close()
+
+    _rows, findings, messages = report_html.collect(str(db), "requests", "all", False)
+    doc = report_html.build_report_doc(_rows, findings, {"db": str(db)}, messages)
+
+    listed = [v for f in doc["findings"] for v in f["ids"]]
+    assert listed, "no IDs listed for an enumerable endpoint"
+    assert all(len(v) <= report_html._ID_DISPLAY + 1 for v in listed)
+    assert token not in json.dumps(doc), "a credential escaped through ids"
+
+
 def test_a_finding_only_offers_its_own_panes(tmp_path, make_db):
     """The message store is per row, so relevance has to be per finding.
 

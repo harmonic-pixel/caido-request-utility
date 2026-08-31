@@ -189,6 +189,11 @@ adding an all-or-nothing pattern.
   that rejects DTDs/entities) — don't loosen this; it's the XXE surface the
   `xxe` check exists to catch.
 - Secret findings are redacted by default (`_present`); `--show-secrets` reveals.
+- `_present` only redacts the `secrets` check, so `report_html.build_messages`
+  masks known secrets everywhere else they surface: the message panes, any
+  finding's `evidence`, and the `ids` list. An "identifier" is sometimes a
+  credential — `idor_finder` treats a bearer token in a hinted body parameter
+  as one — and nothing should be a way round the masking.
 - **A `secrets` detector's match is what gets hidden** — in the finding and in
   the report's message pane. Match the credential, not its label: too wide and
   the pane loses the context that makes it readable, too narrow and the secret

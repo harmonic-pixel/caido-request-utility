@@ -42,6 +42,9 @@ class _Finding:
     # An identity that replaces `key()` for dedup: occurrences sharing it are
     # the same finding wearing different paths. `jwt_identity` builds one.
     group: str | None = None
+    # Observed values behind the finding — the IDs an IDOR candidate was seen
+    # with. Listed in the report the way `paths` is.
+    ids: list[str] = field(default_factory=list)
 
     def key(self):
         return (
@@ -67,6 +70,7 @@ def Finding(
     evidence,
     detail="",
     group=None,
+    ids=None,
 ):
     """Construct a finding.
 
@@ -76,7 +80,8 @@ def Finding(
 
     `group` is optional: pass one when several occurrences are the same finding
     seen on different paths, and `_dedupe` will collapse them into one carrying
-    every path.
+    every path. `ids` is optional too: the observed values behind the finding,
+    listed in the report.
     """
     return _Finding(
         check,
@@ -88,6 +93,7 @@ def Finding(
         evidence,
         detail,
         group=group,
+        ids=list(ids or []),
     )
 
 

@@ -145,6 +145,11 @@ TYPE_LABEL = {
     "objectid": "mongo-objectid",
     "hash": "hex-hash",
 }
+# Kept per candidate. The text renderer shows the first few; the HTML report
+# lists them all, which is what you actually enumerate against.
+_ID_SAMPLE = 100
+_TEXT_SAMPLE = 5
+
 _TYPE_WEIGHT = {"int": 5, "objectid": 3, "uuid": 3, "hash": 1}
 
 
@@ -429,7 +434,7 @@ def analyse(rows) -> list[Finding]:
                 location=location,
                 id_type=id_type,
                 distinct_ids=len(g.values),
-                sample_ids=sorted(g.values, key=_sort_key)[:5],
+                sample_ids=sorted(g.values, key=_sort_key)[:_ID_SAMPLE],
                 auth_observed=g.auth,
                 unauth_observed=g.unauth,
                 statuses=statuses,
@@ -500,8 +505,9 @@ def _fmt_bytes(n: int) -> str:
 
 
 def _render_block(f: Finding) -> list[str]:
-    sample = ", ".join(f.sample_ids)
-    more = f.distinct_ids - len(f.sample_ids)
+    shown = f.sample_ids[:_TEXT_SAMPLE]
+    sample = ", ".join(shown)
+    more = f.distinct_ids - len(shown)
     if more > 0:
         sample += f" (+{more} more, {f.distinct_ids} distinct)"
     else:

@@ -88,7 +88,7 @@ def idor_findings(db, table):
     `idor_finder` aggregates its own way and needs `response_length`, which the
     scanner's loader does not select — hence its own read of the table. The
     evidence is one observed ID rather than the whole sample, so the report can
-    point at it in the request; the rest of the sample is in the detail.
+    point at it in the request; the rest are listed in the dropdown.
     """
     try:
         rows = idor.load_rows(db, table)
@@ -114,9 +114,10 @@ def idor_findings(db, table):
                 c.endpoint,
                 c.location,
                 c.sample_ids[0] if c.sample_ids else "",
-                f"{c.note} — IDs seen: {', '.join(c.sample_ids)} "
-                f"({c.distinct_ids} distinct); responses {c.statuses or '—'}; "
-                f"auth: {auth}; requests: {c.request_count}",
+                f"{c.note} — {c.distinct_ids} distinct; "
+                f"responses {c.statuses or '—'}; auth: {auth}; "
+                f"requests: {c.request_count}",
+                ids=c.sample_ids,
             )
         )
     return out
@@ -143,6 +144,9 @@ def collect(db, table, check, show_secrets):
 # --------------------------------------------------------------------------- #
 # Messages: the request and response a finding came out of
 # --------------------------------------------------------------------------- #
+
+# How much of an observed value the ID listing shows.
+_ID_DISPLAY = 80
 
 # Per pane. A report is a triage view, not an archive of the corpus, but the
 # cap has to clear a real response body or the evidence falls off the end and
@@ -197,6 +201,13 @@ def _mask(secret):
     if units <= 8:
         return secret[:1] + "•" * (units - 1) if units else ""
     return secret[:4] + "•" * (units - 6) + secret[-2:]
+
+
+def _hide(text, secrets):
+    """Mask every known secret in a piece of text, keeping its length."""
+    for raw in secrets:
+        text = text.replace(raw, _mask(raw))
+    return text
 
 
 def _panes_for(row):
@@ -255,9 +266,17 @@ def build_messages(rows, findings, show_secrets):
         secrets = {f.evidence for f in findings if f.check == "secrets" and f.evidence}
         for row_panes in panes.values():
             for name, text in row_panes.items():
-                for raw in secrets:
-                    text = text.replace(raw, _mask(raw))
-                row_panes[name] = text
+                row_panes[name] = _hide(text, secrets)
+        # A secret can be quoted by a finding that is not a secrets finding:
+        # `_present` only redacts that check, and idor_finder will treat a
+        # bearer token in a hinted body parameter as an identifier, putting it
+        # in `evidence` and in `ids`. Mask those the same way. Locations were
+        # taken before this and the mask keeps its length, so they still hold.
+        for f in findings:
+            if f.evidence and f.check != "secrets":
+                f.evidence = _hide(f.evidence, secrets)
+            if f.ids:
+                f.ids = [_hide(i, secrets) for i in f.ids]
     return {"panes": panes, "locations": locations}
 
 
@@ -287,6 +306,12 @@ def build_report_doc(rows, findings, meta_extra, messages=None, repo_url=REPO_UR
     for i, f in enumerate(findings):
         rec = {"id": i}
         rec.update(asdict(f))
+        # An observed value is meant to be an identifier; anything longer is
+        # something else that got classified as one, and a full one would make
+        # the listing unreadable.
+        rec["ids"] = [
+            v if len(v) <= _ID_DISPLAY else v[:_ID_DISPLAY] + "…" for v in f.ids
+        ]
         row, pane, match = locations[i] if i < len(locations) else (None, None, None)
         rec.update({"row": row, "pane": pane, "match": match})
         rec["rule_url"] = rule_urls.get(f.check)
@@ -626,14 +651,22 @@ _TEMPLATE = r"""<!DOCTYPE html>
 
     var det=el("div","detail");
     if(f.detail) det.appendChild(el("div","note",f.detail));
-    if((f.paths||[]).length>1){
+    function listing(items,summary){
       var d=el("details","paths");
-      d.appendChild(el("summary",null,
-        "seen on "+f.paths.length+" paths — same finding, deduplicated"));
+      d.appendChild(el("summary",null,summary));
       var ul=el("ul");
-      f.paths.forEach(function(pth){ ul.appendChild(el("li",null,pth)); });
+      items.forEach(function(it){ ul.appendChild(el("li",null,it)); });
       d.appendChild(ul);
-      det.appendChild(d);
+      return d;
+    }
+    if((f.paths||[]).length>1){
+      det.appendChild(listing(f.paths,
+        "seen on "+f.paths.length+" paths — same finding, deduplicated"));
+    }
+    if((f.ids||[]).length){
+      det.appendChild(listing(f.ids,
+        f.ids.length+" observed ID"+(f.ids.length===1?"":"s")
+        +" — replay these as a second identity"));
     }
     var msg=MSG[String(f.row)];
     if(msg){
