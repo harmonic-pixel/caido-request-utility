@@ -201,6 +201,9 @@ skipped and counted); `<response>`, `<host>`, `<port>`, `<protocol>`,
 - Better base64/hex decoding: the current 16-character floor on candidate
   tokens silently misses short wrapped payloads, so judge a candidate on the
   entropy and printability of what it decodes to rather than on its length
+- Run IDOR from `passive_scan` too. The report includes its candidates on a
+  full run and the terminal scan has none of them, so the same corpus gives
+  two different answers depending on which command you ran
 - Make the HTML report hold up on a large corpus — 100k requests, and the
   findings that come with them. The report is a single self-contained file
   that embeds the whole document as JSON, parses it on load and renders every
