@@ -55,6 +55,7 @@ from cru import passive_scan as ps
 from cru import progress
 from cru.checks import CHECKS
 from cru.checks.base import Finding
+from cru.checks.secrets import SecretScanner
 
 TOOL_VERSION = "1.0"
 
@@ -281,18 +282,33 @@ def _locate(finding, rows, panes):
     return fallback, "request", None
 
 
+def _secret_values(rows):
+    """Every credential the panes must hide.
+
+    Its own detector pass, never the run's findings. Two things went wrong when
+    the masking read those: asking for fewer checks handed out more secrets —
+    `--skip secrets`, or a `--check` naming any other single check, left every
+    token in the panes in the clear — and even a full run only knew the text of
+    one occurrence per group, so a re-issued session token stayed readable
+    beside the sibling that got masked. The panes embed whole bodies whatever
+    the user asked to scan for.
+    """
+    return {f.evidence.strip() for f in SecretScanner().scan(rows) if f.evidence}
+
+
 def build_messages(rows, findings, show_secrets):
     """Panes per row, and where each finding's evidence sits in them.
 
     Findings must still hold their raw evidence here. Locating happens against
     the unmasked text; the secrets are then masked in place, which a message
     needs or it would leak in full what its own finding hides.
+
     """
     panes = {i: _panes_for(row) for i, row in enumerate(rows)}
     locations = [_locate(f, rows, panes) for f in findings]
 
     if not show_secrets:
-        secrets = {f.evidence for f in findings if f.check == "secrets" and f.evidence}
+        secrets = _secret_values(rows)
         for row_panes in panes.values():
             for name, text in row_panes.items():
                 row_panes[name] = _hide(text, secrets)

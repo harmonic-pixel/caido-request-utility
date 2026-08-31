@@ -220,6 +220,14 @@ adding an all-or-nothing pattern.
   finding's `evidence`, and the `ids` list. An "identifier" is sometimes a
   credential — `idor_finder` treats a bearer token in a hinted body parameter
   as one — and nothing should be a way round the masking.
+- **The masking takes its own detector pass** (`report_html._secret_values` →
+  `SecretScanner.scan`), never the run's findings. Two ways that leaked: with
+  `--skip secrets` (or a `--check` naming another check) there were no secret
+  findings to read, so a report embedding whole bodies masked nothing at all;
+  and `run`'s dedup collapses a group to one occurrence, so a re-issued session
+  token stayed readable beside the sibling that got masked. `scan` is `run`
+  without the collapsing — keep them that way round. The pass costs a `secrets`
+  scan on every report; that is the price of the panes.
 - **A `secrets` detector's match is what gets hidden** — in the finding and in
   the report's message pane. Match the credential, not its label: too wide and
   the pane loses the context that makes it readable, too narrow and the secret

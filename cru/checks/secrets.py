@@ -150,6 +150,16 @@ class SecretScanner:
         self.entropy = entropy
 
     def run(self, rows):
+        return _dedupe(self.scan(rows))
+
+    def scan(self, rows):
+        """Every occurrence, before dedup — what the report's masking needs.
+
+        `run` collapses the occurrences that share a group: a session token
+        re-issued through a browsing session becomes one finding carrying one
+        representative's text. The report embeds whole bodies, so it has to
+        hide every sibling sitting in a pane too, not just that one.
+        """
         out = []
         for r in rows:
             # What a Basic credential on this request decodes to. Some apps put
@@ -210,7 +220,7 @@ class SecretScanner:
                 # 2) entropy pass for unlabelled high-entropy tokens
                 if self.entropy:
                     out.extend(self._entropy(r, label, text, claimed))
-        return _dedupe(out)
+        return out
 
     def _entropy(self, r, label, text, claimed=()):
         found = []

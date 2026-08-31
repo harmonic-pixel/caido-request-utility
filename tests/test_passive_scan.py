@@ -861,6 +861,64 @@ def test_report_message_offsets_survive_astral_characters(tmp_path, make_db):
         assert sliced == report_html._needle(rec["evidence"])
 
 
+def test_report_masks_every_occurrence_not_just_the_one_reported(tmp_path, make_db):
+    """A re-issued token is one finding; both siblings sit in the panes."""
+    from cru import report_html
+
+    first = _jwt({"sub": "42", "role": "admin", "iat": 1})
+    second = _jwt({"sub": "42", "role": "admin", "iat": 900})
+    con = make_db(
+        [
+            dict(headers=f"Authorization: Bearer {first}"),
+            dict(headers=f"Authorization: Bearer {second}"),
+        ]
+    )
+    db = tmp_path / "g.db"
+    disk = sqlite3.connect(str(db))
+    con.backup(disk)
+    disk.close()
+
+    _rows, findings, messages = report_html.collect(
+        str(db), "requests", "secrets", False
+    )
+    assert len([f for f in findings if f.signature == "jwt"]) == 1
+    panes = "".join(t for row in messages["panes"].values() for t in row.values())
+    assert first not in panes and second not in panes
+
+
+def test_report_masks_secrets_when_the_secrets_check_was_skipped(tmp_path, make_db):
+    """Asking for fewer checks must not hand out more secrets.
+
+    The panes embed whole bodies whatever ran, so `--skip secrets` used to
+    produce a report with every token sitting in the clear.
+    """
+    from cru import report_html
+
+    token = (
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4ifQ"
+        ".dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+    )
+    db = tmp_path / "s.db"
+    con = make_db(
+        [
+            dict(
+                headers=f"Authorization: Bearer {token}",
+                response_body=f'{{"token":"{token}"}}',
+            )
+        ]
+    )
+    disk = sqlite3.connect(str(db))
+    con.backup(disk)
+    disk.close()
+
+    _rows, _findings, messages = report_html.collect(
+        str(db), "requests", "all", False, skip=("secrets",)
+    )
+    panes = "".join(t for row in messages["panes"].values() for t in row.values())
+    assert token not in panes
+    assert "•" in panes
+
+
 def test_legacy_db_without_decoded_columns_still_scans():
     """Loader falls back gracefully when decoded columns are absent."""
     con = sqlite3.connect(":memory:")

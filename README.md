@@ -201,13 +201,6 @@ skipped and counted); `<response>`, `<host>`, `<port>`, `<protocol>`,
 - Better base64/hex decoding: the current 16-character floor on candidate
   tokens silently misses short wrapped payloads, so judge a candidate on the
   entropy and printability of what it decodes to rather than on its length
-- **Redaction should not depend on the secrets check running.** The report
-  masks credentials in its message panes by looking them up in the `secrets`
-  findings, so `--skip secrets` — or `--check` naming any other single check —
-  produces a report with nothing masked at all. On the sample corpus that is 12
-  JWTs sitting in the clear where a full run has none. Asking for fewer checks
-  should not hand out more secrets: the masking wants its own pass over the
-  panes, independent of whether anything is reporting on it
 - Run IDOR from `passive_scan` too. The report includes its candidates on a
   full run and the terminal scan has none of them, so the same corpus gives
   two different answers depending on which command you ran
