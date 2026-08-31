@@ -4,13 +4,7 @@ from __future__ import annotations
 
 import re
 
-from cru.checks.base import (
-    Finding,
-    _dedupe,
-    _snippet,
-    request_inputs,
-    request_param_values,
-)
+from cru.checks.base import Finding, _dedupe, _snippet, request_inputs
 
 #
 # Reads request inputs and flags ones that look like they carry code — Python,
@@ -170,13 +164,7 @@ class CodeScanner:
     def run(self, rows):
         out = []
         for r in rows:
-            # Whole fields first, then each parameter on its own. Code inside a
-            # JSON string arrives with its newlines escaped, so every line runs
-            # into the previous one (`...Operation\ndef operation(`) and a
-            # \b-anchored pattern never fires on the raw field. The per-leaf
-            # view has the value unescaped, which is where code actually shows.
-            fields = list(request_inputs(r)) + list(request_param_values(r))
-            for label, text in fields:
+            for label, text in request_inputs(r):
                 for lang, tier, sev, rx in _CODE_SIGS:
                     m = rx.search(text)
                     if not m:

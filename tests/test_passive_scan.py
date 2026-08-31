@@ -796,6 +796,35 @@ def test_code_sees_python_inside_a_json_string(run_check):
     assert "def operation(" in python[0].evidence
 
 
+@pytest.mark.parametrize(
+    "snippet,signature",
+    [
+        ("# a note\ndef operation(a, b):\n    return a", "code:python (syntax)"),
+        ("<?php\n$x = 1;\nsystem($cmd);\n?>", "code:generic-eval-exec-sink (exec)"),
+        ("function f(){\n  require('child_process');\n}", "code:javascript (exec)"),
+        ("#!/bin/sh\ncat /etc/passwd\n", "code:shell (exec)"),
+    ],
+)
+def test_code_in_a_json_string_is_seen_whatever_the_language(
+    snippet, signature, run_check
+):
+    """The seam is shared, so the unescaping is not a Python-only favour."""
+    rows = [dict(method="POST", body=json.dumps({"src": snippet}))]
+
+    assert signature in {f.signature for f in run_check("code", rows)}
+
+
+def test_json_view_does_not_double_report(run_check):
+    """The view re-presents a field it shares text with; a hit in both is one."""
+    body = json.dumps({"note": "line\nline", "k": "AKIAIOSFODNN7EXAMPLE"})
+    rows = [dict(method="POST", body=body, response_body=body)]
+
+    keys = [f for f in run_check("secrets", rows) if f.signature == "aws-access-key-id"]
+
+    assert len(keys) == 2, "one per field, not one per view"
+    assert {f.location for f in keys} == {"request-body", "response-body"}
+
+
 def test_code_does_not_read_markdown_backticks_as_a_shell_command(run_check):
     """A word in backticks is prose; `cat /etc/passwd` is not."""
     prose = json.dumps({"doc": "A function must be named `operation`."})

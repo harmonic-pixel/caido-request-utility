@@ -103,6 +103,13 @@ severity sorting.
 ### Field access helpers (the seam checks build on)
 - `request_inputs(row)` → `(label, text)` for request-side fields (URL-decoded).
 - `iter_fields(row)` → `(label, text)` for all fields incl. responses.
+- Both also emit a `#json` view (e.g. `request-body#json`) holding the string
+  leaves of a JSON field, unescaped. A JSON string escapes its newlines, so a
+  value's lines run together (`...Operation\ndef operation(`) and no
+  `\b`-anchored pattern can fire on it — the view is what lets **every** check
+  see code, in any language, carried in a JSON body. It is emitted only when
+  the document escapes whitespace, and `_Finding.key()` strips `#json` so a hit
+  visible in both views is one finding reported against the field.
 - `request_param_values(row)` → `(label, value)` per individual param, incl.
   nested JSON leaves. Use this when the parameter *name* matters.
 - `response_text(row)` → concatenated response headers+body.

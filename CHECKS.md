@@ -35,6 +35,15 @@ your triage, not something the tool sorts on.
 Checks that hunt for a payload use the request-side helpers; checks that hunt
 for a leak or a misconfiguration read the response.
 
+`request_inputs` and `iter_fields` also emit a `#json` view of any field that is
+a JSON document — its string leaves, unescaped, one per line. A JSON string
+escapes its newlines, so code carried in one runs together
+(`"...Operation\ndef operation("` reads as `ndef operation(`) and no
+word-boundary pattern can match it. The view is what lets every check see code
+in a JSON body whatever language it is written in. It is emitted only when the
+document actually escapes whitespace, and a hit visible in both the field and
+its view dedupes to one finding reported against the field.
+
 ### Encoding coverage
 
 Base64/hex-wrapped payloads are decoded **once, at import time** by

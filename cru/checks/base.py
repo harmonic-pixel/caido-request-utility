@@ -49,7 +49,9 @@ class _Finding:
             self.signature,
             self.host,
             self.path,
-            self.location,
+            # The "#json" view re-presents a field it shares its text with, so a
+            # hit visible in both is one finding, reported against the field.
+            self.location.replace("#json", ""),
             self.evidence,
         )
 
@@ -178,31 +180,66 @@ def _decoded_for(row, col):
     return ""
 
 
+def _json_view(text):
+    """The string leaves of a JSON document, unescaped, one per line.
+
+    A JSON string escapes its newlines, so code carried in one runs together —
+    `"...Operation\\ndef operation("` reads as `ndef operation(`, and every
+    `\\b`-anchored pattern misses it. Parsing the document and handing back the
+    leaves gives every check the value as it will actually be interpreted,
+    whatever language it is written in. Returns "" when the text is not JSON.
+    """
+    # Only worth a view when the document escapes whitespace: that is what glues
+    # a value's lines together and hides them from a \\b-anchored pattern. Without
+    # one the leaves read the same as the raw field, and every check would report
+    # the same hit twice under two labels.
+    if not any(esc in text for esc in ("\\n", "\\r", "\\t")):
+        return ""
+    stripped = text.lstrip()
+    if stripped[:1] not in ("{", "["):
+        return ""
+    try:
+        doc = json.loads(stripped)
+    except (ValueError, RecursionError):
+        return ""
+    leaves = [v for _k, v in _walk_json(doc) if isinstance(v, str) and v]
+    return "\n".join(leaves) if leaves else ""
+
+
+def _views(label, text):
+    """Yield a field's text and, when it is JSON, its unescaped leaves."""
+    yield label, text
+    leaves = _json_view(text)
+    if leaves:
+        yield f"{label}#json", leaves[:_MAX_FIELD]
+
+
 def request_inputs(row):
     """Yield (label, text) for request-side inputs.
 
     Emits the URL-decoded field, plus a "#decoded" view holding the base64/hex
-    plaintext recovered at import time, so pattern checks get encoding coverage.
+    plaintext recovered at import time, so pattern checks get encoding coverage,
+    plus a "#json" view of the unescaped string leaves when the field is JSON.
     """
     for label, col in _REQUEST_FIELDS:
         val = row[col]
         if val:
-            yield label, unquote_plus(str(val)[:_MAX_FIELD])
+            yield from _views(label, unquote_plus(str(val)[:_MAX_FIELD]))
         dec = _decoded_for(row, col)
         if dec:
-            yield f"{label}#decoded", dec[:_MAX_FIELD]
+            yield from _views(f"{label}#decoded", dec[:_MAX_FIELD])
 
 
 def iter_fields(row):
-    """Yield (label, text) for each scannable field, plus its "#decoded" view."""
+    """Yield (label, text) per scannable field, plus its "#decoded"/"#json" views."""
     for label, col in _SCAN_FIELDS:
         val = row[col]
         if val:
             text = val if isinstance(val, str) else str(val)
-            yield label, text[:_MAX_FIELD]
+            yield from _views(label, text[:_MAX_FIELD])
         dec = _decoded_for(row, col)
         if dec:
-            yield f"{label}#decoded", dec[:_MAX_FIELD]
+            yield from _views(f"{label}#decoded", dec[:_MAX_FIELD])
 
 
 def response_text(row):
