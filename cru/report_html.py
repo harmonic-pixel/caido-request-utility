@@ -10,8 +10,10 @@ from an existing results file without rescanning.
 The JSON document has four parts: `meta` (db, timestamp, row count, check
 selection), `summary` (counts by check / host), `messages` (the request and
 response a finding came out of, reconstructed once per row) and `findings`
-(every finding with full context, each pointing at its message and at the
-offsets of its evidence inside it). Secret redaction is applied before the
+(every finding with full context, each pointing at its message, at the offsets
+of its evidence inside it, and at the panes it should offer — the store is per
+row and shared, so a finding names its own rather than showing a neighbour's
+decoded view). Secret redaction is applied before the
 document is built, so the JSON respects --show-secrets too — messages included:
 a secret is hidden in the message text as well as in the finding.
 
@@ -292,6 +294,13 @@ def build_report_doc(rows, findings, meta_extra, messages=None, repo_url=REPO_UR
             # Keep the request and response of any row a finding points at, and
             # a decoded pane only when a finding actually landed in one.
             used.setdefault(row, {"request", "response"}).add(pane)
+            # The store is per row and several findings share it, so name the
+            # panes *this* finding should offer. Otherwise a fingerprint hit in
+            # a response header sprouts a #decoded tab that belongs to some
+            # other finding on the same request.
+            rec["panes"] = ["request", "response"] + (
+                [pane] if pane not in ("request", "response") else []
+            )
         records.append(rec)
 
     return {
@@ -628,7 +637,9 @@ _TEMPLATE = r"""<!DOCTYPE html>
     }
     var msg=MSG[String(f.row)];
     if(msg){
-      var names=Object.keys(msg);
+      // Only this finding's panes: the store is shared across the row.
+      var names=(f.panes||Object.keys(msg)).filter(function(n){
+        return msg[n]!==undefined;});
       var first=(f.pane && msg[f.pane]!==undefined)?f.pane:names[0];
       var tabs=el("div","msg-tabs"), pre=el("pre","msg");
       names.forEach(function(nm){

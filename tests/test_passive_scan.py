@@ -656,6 +656,42 @@ def test_report_points_at_the_message_the_evidence_came_from(tmp_path, make_db):
     assert '"tail":"zzz"' in pane[rec["match"][1] :]
 
 
+def test_a_finding_only_offers_its_own_panes(tmp_path, make_db):
+    """The message store is per row, so relevance has to be per finding.
+
+    One request can raise a response-header finding and a decoded-body one. The
+    first has no business showing the second's #decoded tab.
+    """
+    from cru import report_html
+
+    db = tmp_path / "p.db"
+    payload = b64("<?php system(1); ?>")
+    con = make_db(
+        [
+            dict(
+                method="POST",
+                body=f"d={payload}",
+                response_headers="Server: nginx/1.2.3",
+            )
+        ]
+    )
+    disk = sqlite3.connect(str(db))
+    con.backup(disk)
+    disk.close()
+
+    _rows, findings, messages = report_html.collect(str(db), "requests", "all", False)
+    doc = report_html.build_report_doc(_rows, findings, {"db": str(db)}, messages)
+
+    banner = next(f for f in doc["findings"] if f["check"] == "fingerprint")
+    decoded = next(f for f in doc["findings"] if "#decoded" in (f["pane"] or ""))
+    assert banner["row"] == decoded["row"], "both findings are on the one request"
+
+    assert banner["panes"] == ["request", "response"]
+    assert decoded["pane"] in decoded["panes"]
+    # The store still holds the union; it is the offer that is scoped.
+    assert decoded["pane"] in doc["messages"][str(banner["row"])]
+
+
 def test_masking_hides_the_credential_not_the_header_name(tmp_path, make_db):
     """`Authorization: Basic` is context, not the secret.
 
