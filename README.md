@@ -198,9 +198,9 @@ skipped and counted); `<response>`, `<host>`, `<port>`, `<protocol>`,
 - Broader test coverage
 - Tests against large sample data, on the order of 10k requests, to catch
   paging and memory behaviour the small fixtures cannot
-- Better base64/hex decoding: the current 16-character floor on candidate
-  tokens silently misses short wrapped payloads, so judge a candidate on the
-  entropy and printability of what it decodes to rather than on its length
+- Make `decoded_view` recursive: it unwraps one layer of base64 or hex, so a
+  base64-of-hex-of-payload is still invisible. Needs a depth cap, a progress and
+  printability gate, and a total-work cap to stay cheap
 - Run IDOR from `passive_scan` too. The report includes its candidates on a
   full run and the terminal scan has none of them, so the same corpus gives
   two different answers depending on which command you ran

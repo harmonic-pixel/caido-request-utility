@@ -30,8 +30,18 @@ import re
 
 _MAX = 400_000
 
-_B64_RE = re.compile(r"[A-Za-z0-9+/]{16,}={0,2}|[A-Za-z0-9_-]{16,}")
+# Eight base64 characters is six bytes — enough for `_decoded_text` to judge
+# what came out. Shorter than that, the padding has to say so: `YWRtaW4=` is
+# "admin", where a bare `answer` is indistinguishable from any other word. Six
+# is the floor even padded, below which there are three bytes to go on.
+_B64_RE = re.compile(
+    r"[A-Za-z0-9+/]{8,}={0,2}|[A-Za-z0-9_-]{8,}|[A-Za-z0-9+/_-]{6,7}={1,2}"
+)
 _HEX_PCT_RE = re.compile(r"(?:%[0-9A-Fa-f]{2}){6,}")
+# Hex keeps its longer floor: eight hex characters is four bytes, too few to
+# judge, and a minified bundle is full of eight-digit hex runs — measured on a
+# 565-request corpus, dropping this floor bought fourteen junk decodes and no
+# real one.
 _HEX_RUN_RE = re.compile(r"\b(?:0x)?[0-9A-Fa-f]{16,}\b")
 _PRINTABLE = re.compile(rb"[\x09\x0a\x0d\x20-\x7e]")
 # The canonical "where are the JWTs" patterns, shared with the checks so the
@@ -46,22 +56,63 @@ JWT_DECODED_RE = re.compile(r'\{"alg":.*\}\.[A-Za-z0-9_-]*')
 _MAX_JWTS = 64
 
 
-def _b64_decode_variants(tok: str):
-    for decoder in (base64.b64decode, base64.urlsafe_b64decode):
-        try:
-            pad = "=" * (-len(tok) % 4)
-            raw = decoder(tok + pad)
-            if raw:
-                return raw
-        except (ValueError, binascii.Error):
-            continue
-    return None
+def _b64_decode(tok: str):
+    """Decode a token in whichever base64 alphabet it is written in.
+
+    `b64decode` does not validate: hand it a url-safe token and it drops the
+    `-`/`_` and decodes the rest into bytes that were never there.
+    """
+    decoder = (
+        base64.urlsafe_b64decode if ("-" in tok or "_" in tok) else base64.b64decode
+    )
+    try:
+        return decoder(tok + "=" * (-len(tok) % 4)) or None
+    except (ValueError, binascii.Error):
+        return None
 
 
 def _mostly_printable(b: bytes, threshold=0.85) -> bool:
     if not b:
         return False
     return len(_PRINTABLE.findall(b)) / len(b) >= threshold
+
+
+# A short decode cannot be judged by how printable it is: any six-letter word is
+# valid base64, and "answer" decodes to `j{0z` — four printable characters of
+# nothing. So a short one has to *read* as a value: printable ASCII throughout,
+# nothing but the characters a value is written with, and one of the marks that
+# says text rather than noise — a three-letter run, a bare number, a `key=`, a
+# path, a tag, the opening of a JSON document or a URL.
+_SHORT_DECODE = 12
+_VALUE_CHARS = re.compile(r"^[\w .,:;/@+=&?%$#!*()\[\]{}<>'\"~^|\\-]+$")
+_READS_AS_TEXT = re.compile(
+    r"[{\[]\s*[\"']|://|\.\./|<[A-Za-z/]|[a-z]{3}|[A-Z]{3}|^\d+$|\w="
+)
+
+
+def _decoded_text(raw: bytes) -> str | None:
+    """The plaintext `raw` stands for, or None when it is not worth carrying.
+
+    The length of the *token* says nothing — a wrapped payload is as short as
+    the value someone wrapped — so the decision is made on the bytes that came
+    out of it.
+    """
+    if not raw or len(raw) < 4:
+        return None
+    if len(raw) >= _SHORT_DECODE:
+        if not _mostly_printable(raw):
+            return None
+        text = raw.decode("utf-8", "replace")
+        return text if any(not c.isspace() and c.isprintable() for c in text) else None
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if not text.isascii() or not all(c.isprintable() or c in "\t\n\r" for c in text):
+        return None
+    if not _VALUE_CHARS.match(text) or not _READS_AS_TEXT.search(text):
+        return None
+    return text
 
 
 def _iter_decoded(text: str):
@@ -71,22 +122,17 @@ def _iter_decoded(text: str):
     seen = {text}
 
     for m in _B64_RE.finditer(text):
-        raw = _b64_decode_variants(m.group(0))
-        if raw and len(raw) >= 4 and _mostly_printable(raw):
-            dec = raw.decode("utf-8", "replace")
-            if dec not in seen and any(
-                not c.isspace() and c.isprintable() for c in dec
-            ):
-                seen.add(dec)
-                yield dec
+        dec = _decoded_text(_b64_decode(m.group(0)) or b"")
+        if dec and dec not in seen:
+            seen.add(dec)
+            yield dec
 
     for m in _HEX_PCT_RE.finditer(text):
         raw = bytes(int(h, 16) for h in re.findall(r"%([0-9A-Fa-f]{2})", m.group(0)))
-        if raw and len(raw) >= 4 and _mostly_printable(raw):
-            dec = raw.decode("utf-8", "replace")
-            if dec not in seen:
-                seen.add(dec)
-                yield dec
+        dec = _decoded_text(raw)
+        if dec and dec not in seen:
+            seen.add(dec)
+            yield dec
 
     for m in _HEX_RUN_RE.finditer(text):
         tok = m.group(0)
@@ -97,11 +143,10 @@ def _iter_decoded(text: str):
             raw = bytes.fromhex(h)
         except ValueError:
             continue
-        if raw and len(raw) >= 4 and _mostly_printable(raw):
-            dec = raw.decode("utf-8", "replace")
-            if dec not in seen:
-                seen.add(dec)
-                yield dec
+        dec = _decoded_text(raw)
+        if dec and dec not in seen:
+            seen.add(dec)
+            yield dec
 
 
 def _jwt_view(token: str) -> str | None:

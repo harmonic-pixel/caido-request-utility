@@ -404,6 +404,29 @@ def test_decoded_view_helper():
     assert field_decode.decoded_view("just plain text") == ""
 
 
+def test_decoded_view_reaches_short_wrapped_payloads():
+    """A wrapped value is as short as the value someone wrapped."""
+    for payload in ("admin", "root", "user=1", "1234", "../../etc/passwd"):
+        assert payload in field_decode.decoded_view("v=" + b64(payload)), payload
+
+
+def test_decoded_view_does_not_read_words_as_base64():
+    """Any six-letter word decodes to four printable bytes of nothing."""
+    view = field_decode.decoded_view("the answer is either a word or another")
+    assert view == "", view
+    # `answer` really does decode — to `j{0z`, which is what the gate is for.
+    assert field_decode._decoded_text(b"j{0z") is None
+    assert field_decode._decoded_text(b"admin") == "admin"
+
+
+def test_decode_picks_the_alphabet_the_token_is_written_in():
+    """Standard base64 does not validate, so a url-safe token decodes to junk."""
+    import base64
+
+    token = base64.urlsafe_b64encode(b"\xfb/etc/passwd/root").decode().rstrip("=")
+    assert "/etc/passwd" in field_decode.decoded_view("v=" + token)
+
+
 def test_decoded_view_expands_jwts_as_dot_joined_dicts():
     """A JWT reads as one opaque token; the decoded view spells it out."""
     token = _jwt({"sub": "42", "role": "admin"})

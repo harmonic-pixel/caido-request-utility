@@ -56,6 +56,12 @@ etc.), so every pattern check gets encoding coverage without decoding anything
 itself. A finding whose `location` ends in `#decoded` was found in recovered
 plaintext, not in the field as sent.
 
+A candidate is judged on the bytes it decodes to rather than on its length, so
+a short wrapped value (`YWRtaW4=` — "admin") is recovered too; below 12 decoded
+bytes it has to read as a value, because any six-letter word is valid base64 and
+decodes to four printable characters of nothing. Hex runs keep a 16-character
+floor: four bytes is too little to judge, and a minified bundle is full of them.
+
 Two limits worth knowing:
 
 - **One layer only.** `decoded_view` unwraps base64 *or* hex, not

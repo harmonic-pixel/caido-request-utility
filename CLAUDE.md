@@ -173,20 +173,24 @@ narrow, bounded case of the recursion below, not a substitute for it.
 **A DB imported before a `field_decode` change keeps the old decoded columns** —
 the decoding happened at import. Re-import to pick a change up.
 
-> Two open work items on `field_decode`, best done together — both are about
-> deciding "is this really encoded?" from the decoded bytes rather than from the
-> token's shape, and both need the same guardrails to stay cheap:
->
-> 1. **Drop the length floor.** Candidate tokens must currently be 16+ characters,
->    so short wrapped payloads are never decoded and no check ever sees them (a
->    5000-row benchmark corpus lost 1000 payloads to the floor alone). Judge a
->    candidate on the entropy and printability of what it decodes to instead.
-> 2. **Make `decoded_view` recursive** (base64-of-hex-of-payload) with a depth cap
->    (~3–4), a progress + printability gate, a visited-set and total-work cap, and
->    base64/hex branch dedup (the alphabets overlap, so recursion can branch). It
->    currently unwraps one layer, plus the JWT pass described above.
->
-> Add tests alongside. Both are on the README roadmap.
+**A candidate is judged on what it decodes to, not on how long it is**
+(`field_decode._decoded_text`). A wrapped payload is as short as the value
+someone wrapped, so base64 tokens are taken from 8 characters up, and from 6
+when the padding says base64 (`YWRtaW4=` is "admin"). Below 12 decoded bytes,
+printability is not enough to judge — any six-letter word is valid base64, and
+"answer" decodes to `j{0z` — so a short decode has to read as a value: printable
+ASCII throughout, only the characters a value is written with, and one mark of
+text (a three-letter run, a bare number, a `key=`, a path, a tag, the opening of
+a JSON document or a URL). Measured on a 565-request corpus, that let 46k more
+candidates in and one junk decode out the other side. **Hex keeps the
+16-character floor**: eight hex digits is four bytes, too few to judge, and a
+minified bundle is full of them.
+
+> Still open on `field_decode`, and on the README roadmap: **make `decoded_view`
+> recursive** (base64-of-hex-of-payload) with a depth cap (~3–4), a progress +
+> printability gate, a visited-set and total-work cap, and base64/hex branch
+> dedup (the alphabets overlap, so recursion can branch). It currently unwraps
+> one layer, plus the JWT pass described above. Add tests alongside.
 
 ### Correlation
 Some checks raise confidence by correlating request and response in the same row.
