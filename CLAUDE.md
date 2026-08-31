@@ -32,6 +32,7 @@ Burp XML export ──(cru.burp_to_sql)──┘
 | `cru/idor_finder.py` | Standalone IDOR-candidate finder (separate tool, own aggregation). `report_html` folds its candidates in as `check="idor"` on a full run. Its precision comes from what it refuses — see its module docstring before loosening any of it. |
 | `cru/__main__.py` | `python -m cru <source>` — import, scan and report in one command. Thin: it calls the others. |
 | `cru/sql_util.py` | The DB seam: `execute` and `execute_many`. Override to target another DB. |
+| `cru/progress.py` | One-line progress for the slow phases. Stderr, and only when a terminal is attached. |
 | `tests/conftest.py` | Shared fixtures: `make_db` (in-memory corpus) and `run_check`. |
 | `tests/test_passive_scan.py` | Positive+negative per check, encoding, importer, report. |
 | `tests/test_csv_to_sql.py` | Schema shape, decoded columns, and paging boundaries. |

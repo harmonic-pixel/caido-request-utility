@@ -1196,3 +1196,16 @@ def test_ungrouped_findings_still_dedupe_per_path(run_check):
     findings = [f for f in run_check("xss", rows) if f.check == "xss"]
 
     assert {tuple(f.paths) for f in findings} == {("GET /a",), ("GET /b",)}
+
+
+def test_progress_is_silent_without_a_terminal(capsys):
+    """`--json > findings.json` must not collect a thousand carriage returns."""
+    from cru import progress
+
+    progress.track(1, 10, "scanning")
+    progress.count(100, "reading export")
+    progress.clear()
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out == ""

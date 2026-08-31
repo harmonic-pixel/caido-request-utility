@@ -9,7 +9,9 @@ from typing import Any
 from idox import Idox, Request, Response
 from idox.exceptions import MalformedRequest, MalformedResponse
 from pypika import Column, Parameter, Query, Table
+from pypika.functions import Count
 
+import cru.progress
 import cru.schema
 import cru.sql_util
 
@@ -100,9 +102,19 @@ def import_csv(con: sqlite3.Connection, csv_file: Path) -> None:
     with open(csv_file, "r", newline="") as f:
         reader = csv.reader(f)
         next(reader)  # header
+
+        def counted(rows):
+            # The export's row count is not known until it has been read, so
+            # this phase counts rather than filling a bar.
+            for i, row in enumerate(rows, 1):
+                if i % 100 == 0:
+                    cru.progress.count(i, "reading export")
+                yield row
+
         # executemany streams the reader, so the file never lands in memory and
         # the values stay bound rather than rendered into one huge statement.
-        cru.sql_util.execute_many(con, _RAW_INSERT_QUERY, reader)
+        cru.sql_util.execute_many(con, _RAW_INSERT_QUERY, counted(reader))
+    cru.progress.clear()
 
 
 def drop_request_table(con: sqlite3.Connection) -> None:
@@ -193,6 +205,12 @@ def populate_requests_table(con: sqlite3.Connection) -> int:
         .orderby("id")
         .limit(PAGE_SIZE)
     )
+    total = cru.sql_util.execute(
+        con,
+        query=Query.from_(RAW_REQUESTS_TABLE).select(Count("*")),
+        single_result=True,
+    )
+    total = total[0] if total else 0
     skipped = 0
     current_offset = 0
     while True:
@@ -205,6 +223,7 @@ def populate_requests_table(con: sqlite3.Connection) -> int:
         if not requests:
             break
         current_offset += len(requests)
+        cru.progress.track(current_offset, total, "building requests")
 
         parsed = [_request_row(row) for row in requests]
         skipped += sum(1 for p in parsed if p is None)
@@ -212,6 +231,7 @@ def populate_requests_table(con: sqlite3.Connection) -> int:
 
         if len(requests) < PAGE_SIZE:
             break
+    cru.progress.clear()
     return skipped
 
 

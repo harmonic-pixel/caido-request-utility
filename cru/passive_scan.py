@@ -29,6 +29,7 @@ import json
 import sqlite3
 from dataclasses import asdict
 
+from cru import progress
 from cru.checks import CHECKS
 from cru.checks.base import iter_fields
 from cru.checks.secrets import SecretScanner
@@ -184,8 +185,10 @@ def main(argv=None):
                 c.entropy = False
 
     findings = []
-    for c in checks:
+    for i, c in enumerate(checks, 1):
+        progress.track(i - 1, len(checks), f"scanning ({c.name})")
         findings.extend(c.run(rows))
+    progress.clear()
 
     findings = _present(findings, show_secrets=args.show_secrets)
 

@@ -52,6 +52,7 @@ from typing import Any
 
 from cru import idor_finder as idor
 from cru import passive_scan as ps
+from cru import progress
 from cru.checks import CHECKS
 from cru.checks.base import Finding
 
@@ -125,19 +126,24 @@ def idor_findings(db, table):
 
 def collect(db, table, check, show_secrets):
     rows = ps.load_rows(db, table)
+    checks = ps.build_checks(check)
     findings = []
-    for c in ps.build_checks(check):
+    for i, c in enumerate(checks):
+        progress.track(i, len(checks) + 2, f"scanning ({c.name})")
         findings.extend(c.run(rows))
     # IDOR is a separate tool with its own aggregation, not a registered check,
     # so it rides along only on a full run.
     if check == "all":
+        progress.track(len(checks), len(checks) + 2, "scanning (idor)")
         findings.extend(idor_findings(db, table))
     findings.sort(key=lambda f: (f.host, f.check, f.path))
+    progress.track(len(checks) + 1, len(checks) + 2, "locating evidence")
     # Locating runs while the findings still carry their raw evidence, against
     # the unmasked panes; masking is length-preserving, so the offsets survive.
     # It runs after the sort because the locations are aligned by index.
     messages = build_messages(rows, findings, show_secrets=show_secrets)
     findings = ps._present(findings, show_secrets=show_secrets)
+    progress.clear()
     return rows, findings, messages
 
 
