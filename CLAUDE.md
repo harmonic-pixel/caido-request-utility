@@ -55,6 +55,7 @@ uv run black . && uv run ruff check . && uv run ty check    # format, lint, type
 uv run python -m cru export.csv -o report.html              # import + scan + report
 uv run python -m cru.passive_scan corpus.db --check all     # scan
 uv run python -m cru.passive_scan corpus.db --check sqli --json  # one check, JSON out
+uv run python -m cru.passive_scan corpus.db --skip secrets   # all but the named checks
 uv run python -m cru.burp_to_sql history.xml -o corpus.db   # import Burp export
 uv run python -m cru.report_html corpus.db -o report.html   # JSON + HTML report
 uv run python -m cru.idor_finder corpus.db                  # IDOR candidates
@@ -72,8 +73,8 @@ method. `rows` are `sqlite3.Row` objects from `load_rows`. Each check lives in
 its own module under `cru/checks/`, holding the class and the pattern tables only
 it uses; shared primitives are in `cru/checks/base.py`. Registration is one entry
 in the `CHECKS` dict in `cru/checks/__init__.py` — `build_checks()` and the
-`--check` CLI choices are both derived from it, so there is nothing else to keep
-in sync. There are currently **24**:
+`--check` and `--skip` CLI choices are all derived from it, so there is nothing
+else to keep in sync. There are currently **24**:
 
 ```
 deserialization secrets sqli ssti code srcleak xss xxe ssrf redirect

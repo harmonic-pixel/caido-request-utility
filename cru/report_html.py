@@ -124,16 +124,16 @@ def idor_findings(db, table):
     return out
 
 
-def collect(db, table, check, show_secrets):
+def collect(db, table, check, show_secrets, skip=()):
     rows = ps.load_rows(db, table)
-    checks = ps.build_checks(check)
+    checks = ps.build_checks(check, skip=skip)
     findings = []
     for i, c in enumerate(checks):
         progress.track(i, len(checks) + 2, f"scanning ({c.name})")
         findings.extend(c.run(rows))
     # IDOR is a separate tool with its own aggregation, not a registered check,
     # so it rides along only on a full run.
-    if check == "all":
+    if check == "all" and "idor" not in skip:
         progress.track(len(checks), len(checks) + 2, "scanning (idor)")
         findings.extend(idor_findings(db, table))
     findings.sort(key=lambda f: (f.host, f.check, f.path))
@@ -804,7 +804,18 @@ def main(argv=None):
         help="render HTML from an existing report JSON, no rescan",
     )
     ap.add_argument("--table", default="requests")
-    ap.add_argument("--check", default="all")
+    ap.add_argument("--check", choices=("all", *CHECKS), default="all")
+    ap.add_argument(
+        "--skip",
+        nargs="+",
+        metavar="CHECK",
+        choices=(*CHECKS, "idor"),
+        default=[],
+        help="checks to leave out, e.g. --skip secrets idor",
+    )
+    ap.add_argument(
+        "--no-progress", action="store_true", help="do not draw the progress bar"
+    )
     ap.add_argument("--show-secrets", action="store_true")
     ap.add_argument(
         "--repo-url",
@@ -812,6 +823,8 @@ def main(argv=None):
         help="base URL each rule links to (default: the upstream repo on main)",
     )
     args = ap.parse_args(argv)
+    if args.no_progress:
+        progress.disable()
 
     # Re-render path: JSON is the intermediary, so we can rebuild HTML from it.
     if args.from_json:
@@ -831,7 +844,7 @@ def main(argv=None):
         ap.error("a db argument is required unless --from-json is given")
 
     rows, findings, messages = collect(
-        args.db, args.table, args.check, args.show_secrets
+        args.db, args.table, args.check, args.show_secrets, skip=args.skip
     )
     doc = build_report_doc(
         rows,
@@ -839,6 +852,7 @@ def main(argv=None):
         {
             "db": args.db,
             "check": args.check,
+            "skipped": args.skip or None,
             "secrets_redacted": not args.show_secrets,
         },
         messages,

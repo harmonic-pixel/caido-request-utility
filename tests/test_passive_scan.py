@@ -1198,6 +1198,27 @@ def test_ungrouped_findings_still_dedupe_per_path(run_check):
     assert {tuple(f.paths) for f in findings} == {("GET /a",), ("GET /b",)}
 
 
+def test_progress_covers_a_longer_line_it_overwrites(monkeypatch, capsys):
+    """`\\r` returns to column 0 but erases nothing.
+
+    A short label after a long one used to leave the tail of the long one on
+    screen: `scanning (mixedcontent)` then `scanning (xss)` read as
+    `scanning (xss)...ntent)`.
+    """
+    from cru import progress
+
+    monkeypatch.setattr(progress, "_live", lambda: True)
+    progress.clear()
+
+    progress.track(1, 2, "scanning (mixedcontent)")
+    progress.track(2, 2, "scanning (xss)")
+    progress.clear()
+
+    frames = capsys.readouterr().err.split("\r")
+    assert "mixedcontent" not in frames[-2], frames[-2]
+    assert frames[-1].strip() == "", "the line is not left on screen"
+
+
 def test_progress_is_silent_without_a_terminal(capsys):
     """`--json > findings.json` must not collect a thousand carriage returns."""
     from cru import progress

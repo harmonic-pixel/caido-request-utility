@@ -47,7 +47,9 @@ uv run python -m cru history.xml --db burp.db   # a Burp export instead
 ```
 
 The source is recognised by extension: `.csv` is a Caido export, `.xml` a Burp
-one, anything else is taken to be a database that is already built. The steps
+one, anything else is taken to be a database that is already built. `--check`
+picks a single check, `--skip` drops one or more from a full run (`--skip
+secrets idor`), and `--no-progress` turns off the progress bar. The steps
 still stand on their own:
 
 ```bash

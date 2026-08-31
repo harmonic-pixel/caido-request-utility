@@ -120,11 +120,14 @@ def load_rows(db_path, table="requests"):
         con.close()
 
 
-def build_checks(selected):
-    """Instantiate the registered checks: all of them, or the one named."""
-    if selected == "all":
-        return [cls() for cls in CHECKS.values()]
-    return [CHECKS[selected]()]
+def build_checks(selected, skip=()):
+    """Instantiate the registered checks: all of them, or the one named.
+
+    `skip` drops checks by name — `--check all --skip secrets` is a full run
+    without the noisiest one, which is a different thing from picking one check.
+    """
+    names = list(CHECKS) if selected == "all" else [selected]
+    return [CHECKS[n]() for n in names if n not in skip]
 
 
 def dump_fields(rows, out_dir):
@@ -150,6 +153,14 @@ def main(argv=None):
         choices=("all", *CHECKS),
         default="all",
     )
+    ap.add_argument(
+        "--skip",
+        nargs="+",
+        metavar="CHECK",
+        choices=tuple(CHECKS),
+        default=[],
+        help="checks to leave out, e.g. --skip secrets fingerprint",
+    )
     ap.add_argument("--json", action="store_true")
     ap.add_argument(
         "--show-secrets",
@@ -162,11 +173,18 @@ def main(argv=None):
         help="disable entropy scanning (detectors only)",
     )
     ap.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="do not draw the progress bar",
+    )
+    ap.add_argument(
         "--dump-fields",
         metavar="DIR",
         help="write each scannable field to a file for real trufflehog",
     )
     args = ap.parse_args(argv)
+    if args.no_progress:
+        progress.disable()
 
     rows = load_rows(args.db, args.table)
 
@@ -178,7 +196,7 @@ def main(argv=None):
         )
         return
 
-    checks = build_checks(args.check)
+    checks = build_checks(args.check, skip=args.skip)
     if args.no_entropy:
         for c in checks:
             if isinstance(c, SecretScanner):

@@ -26,7 +26,7 @@ from pathlib import Path
 
 import cru.burp_to_sql
 import cru.csv_to_sql
-from cru import passive_scan, report_html
+from cru import passive_scan, progress, report_html
 from cru.checks import CHECKS
 
 
@@ -76,11 +76,24 @@ def main(argv=None):
     ap.add_argument("--table", default="requests")
     ap.add_argument("--check", choices=("all", *CHECKS), default="all")
     ap.add_argument(
+        "--skip",
+        nargs="+",
+        metavar="CHECK",
+        choices=(*CHECKS, "idor"),
+        default=[],
+        help="checks to leave out, e.g. --skip secrets idor",
+    )
+    ap.add_argument(
+        "--no-progress", action="store_true", help="do not draw the progress bar"
+    )
+    ap.add_argument(
         "--show-secrets",
         action="store_true",
         help="do not redact secret matches (handle with care)",
     )
     args = ap.parse_args(argv)
+    if args.no_progress:
+        progress.disable()
 
     if not args.source.exists():
         ap.error(f"{args.source} does not exist")
@@ -92,12 +105,18 @@ def main(argv=None):
     shared = ["--table", args.table, "--check", args.check]
     if args.show_secrets:
         shared.append("--show-secrets")
+    if args.no_progress:
+        shared.append("--no-progress")
 
     if args.out:
         extra = ["--json", args.json] if args.json else []
-        report_html.main([str(db), "-o", args.out, *shared, *extra])
+        skip = ["--skip", *args.skip] if args.skip else []
+        report_html.main([str(db), "-o", args.out, *shared, *skip, *extra])
     else:
-        passive_scan.main([str(db), *shared])
+        # The terminal scan has no IDOR pass to skip; only the report does.
+        named = [c for c in args.skip if c != "idor"]
+        skip = ["--skip", *named] if named else []
+        passive_scan.main([str(db), *shared, *skip])
 
 
 if __name__ == "__main__":

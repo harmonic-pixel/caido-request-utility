@@ -17,37 +17,54 @@ from __future__ import annotations
 import sys
 
 _WIDTH = 28
+_enabled = True
+# How wide the last line was. `\r` returns to column 0 but erases nothing, so a
+# shorter line leaves the tail of a longer one behind it — `scanning
+# (mixedcontent)` followed by `scanning (xss)` reads as `scanning (xss)ntent)`.
+# Padding to the previous width covers it, and needs no escape sequence.
+_last = 0
+
+
+def disable() -> None:
+    """Turn progress off for the rest of the run (`--no-progress`)."""
+    global _enabled
+    _enabled = False
 
 
 def _live() -> bool:
-    return sys.stderr.isatty()
+    return _enabled and sys.stderr.isatty()
+
+
+def _draw(line: str) -> None:
+    global _last
+    if not _live():
+        return
+    sys.stderr.write("\r" + line.ljust(_last))
+    _last = len(line)
+    sys.stderr.flush()
 
 
 def track(done: int, total: int, label: str) -> None:
-    """Draw `label [####····] done/total (nn%)`, overwriting the same line."""
-    if not _live():
-        return
+    """Draw `label [####....] done/total (nn%)`, overwriting the same line."""
     total = max(total, 1)
     done = min(done, total)
     filled = _WIDTH * done // total
-    sys.stderr.write(
-        f"\r  {label} [{'#' * filled}{'.' * (_WIDTH - filled)}] "
+    _draw(
+        f"  {label} [{'#' * filled}{'.' * (_WIDTH - filled)}] "
         f"{done}/{total} ({100 * done // total:3d}%)"
     )
-    sys.stderr.flush()
 
 
 def count(done: int, label: str) -> None:
     """For a phase whose total is not known until it ends."""
-    if not _live():
-        return
-    sys.stderr.write(f"\r  {label} {done} rows")
-    sys.stderr.flush()
+    _draw(f"  {label} {done} rows")
 
 
 def clear() -> None:
     """Wipe the progress line so it does not sit above the real output."""
+    global _last
     if not _live():
         return
-    sys.stderr.write("\r\033[K")
+    sys.stderr.write("\r" + " " * _last + "\r")
+    _last = 0
     sys.stderr.flush()
