@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import re
 
-from cru.checks.base import _B64_TOKEN, Finding, _dedupe, iter_fields, shannon_entropy
+from cru.checks.base import (
+    _B64_TOKEN,
+    Finding,
+    _dedupe,
+    iter_fields,
+    jwt_identity,
+    shannon_entropy,
+)
 
 # High-precision detectors: (name, regex, severity)
 _SECRET_DETECTORS = [
@@ -94,6 +101,9 @@ class SecretScanner:
                 for name, rx, sev in _SECRET_DETECTORS:
                     for m in rx.finditer(text):
                         hit = m.group(1) if (m.groups() and m.group(1)) else m.group(0)
+                        # Same token, re-issued, is the same leaked credential:
+                        # group it on the decoded claims as the jwt check does.
+                        group = jwt_identity(hit) if name == "jwt" else None
                         out.append(
                             Finding(
                                 self.name,
@@ -105,6 +115,7 @@ class SecretScanner:
                                 label,
                                 hit.strip(),
                                 "matched detector pattern",
+                                group=group,
                             )
                         )
                 # 2) entropy pass for unlabelled high-entropy tokens

@@ -79,8 +79,13 @@ def render_text(findings):
                 f"    in    : {f.location}",
                 f"    match : {f.evidence}",
                 f"    note  : {f.detail}",
-                "",
             ]
+            # A merged finding stands for every path it was seen on; listing
+            # them is the difference between one lead and one lead per request.
+            if len(f.paths) > 1:
+                lines.append(f"    paths : {len(f.paths)}")
+                lines += [f"      {p}" for p in f.paths]
+            lines.append("")
     return "\n".join(lines)
 
 

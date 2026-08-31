@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import re
 
-from cru.checks.base import _b64url_json, _dedupe, _emit, request_inputs, response_text
+from cru.checks.base import (
+    _b64url_json,
+    _dedupe,
+    _emit,
+    jwt_identity,
+    request_inputs,
+    response_text,
+)
 
 _JWT_RE = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*")
 
@@ -29,6 +36,10 @@ class JwtScanner:
                     payload = _b64url_json(parts[1]) if len(parts) > 1 else None
                     if not header:
                         continue
+                    # One finding per distinct token, not per re-issue: a
+                    # refreshed session mints a new iat/exp and signature for
+                    # the same credential. The paths merge onto the survivor.
+                    ident = jwt_identity(tok)
                     alg = str(header.get("alg", "")).lower()
                     if alg == "none":
                         _emit(
@@ -40,6 +51,7 @@ class JwtScanner:
                             label,
                             tok[:24],
                             "JWT alg=none — signature bypass",
+                            group=ident,
                         )
                     elif alg.startswith("hs"):
                         _emit(
@@ -51,6 +63,7 @@ class JwtScanner:
                             label,
                             f"alg={alg}",
                             "HMAC-signed JWT — test for weak/" "guessable signing key",
+                            group=ident,
                         )
                     if len(parts) > 2 and parts[2] == "":
                         _emit(
@@ -62,6 +75,7 @@ class JwtScanner:
                             label,
                             tok[:24],
                             "JWT with empty signature segment",
+                            group=ident,
                         )
                     if payload and "exp" not in payload:
                         _emit(
@@ -73,5 +87,6 @@ class JwtScanner:
                             label,
                             "no exp claim",
                             "JWT without expiry — token never " "expires",
+                            group=ident,
                         )
         return _dedupe(out)

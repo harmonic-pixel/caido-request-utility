@@ -10,10 +10,11 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, unquote_plus
 
 # --------------------------------------------------------------------------- #
@@ -31,6 +32,12 @@ class _Finding:
     location: str  # which field: request-body, response-headers, ...
     evidence: str  # redacted/truncated snippet
     detail: str = ""
+    # Every path this finding was seen on. One entry for an ordinary finding;
+    # several once `group` has merged occurrences that differ only by path.
+    paths: list[str] = field(default_factory=list)
+    # An identity that replaces `key()` for dedup: occurrences sharing it are
+    # the same finding wearing different paths. `jwt_identity` builds one.
+    group: str | None = None
 
     def key(self):
         return (
@@ -44,15 +51,68 @@ class _Finding:
 
 
 def Finding(
-    check, severity, signature, host, method, path, location, evidence, detail=""
+    check,
+    severity,
+    signature,
+    host,
+    method,
+    path,
+    location,
+    evidence,
+    detail="",
+    group=None,
 ):
     """Construct a finding.
 
     `severity` is still accepted so the individual checks don't need changing,
     but it is intentionally discarded — this tool does not rank findings by
     severity. Everything downstream (dedup, output, report) ignores it.
+
+    `group` is optional: pass one when several occurrences are the same finding
+    seen on different paths, and `_dedupe` will collapse them into one carrying
+    every path.
     """
-    return _Finding(check, signature, host, method, path, location, evidence, detail)
+    return _Finding(
+        check,
+        signature,
+        host,
+        method,
+        path,
+        location,
+        evidence,
+        detail,
+        group=group,
+    )
+
+
+# Claims that change on every issue of the same token, so two tokens differing
+# only in these are the same credential to a reviewer.
+_JWT_VOLATILE_CLAIMS = frozenset({"iat", "exp", "nbf", "jti", "auth_time", "nonce"})
+
+
+def jwt_identity(token):
+    """A stable identity for a JWT: its header and its non-volatile claims.
+
+    Refreshing a session mints a new token with new `iat`/`exp` and a new
+    signature, so a browsing session leaves dozens of findings that are all the
+    same credential on the same subject. Grouping on the decoded content
+    collapses them; `None` means the token would not decode and cannot be
+    grouped, so it stays on its own.
+    """
+    parts = token.split(".")
+    header = _b64url_json(parts[0])
+    if not isinstance(header, dict):
+        return None
+    payload = _b64url_json(parts[1]) if len(parts) > 1 else None
+    claims = (
+        {k: v for k, v in payload.items() if k not in _JWT_VOLATILE_CLAIMS}
+        if isinstance(payload, dict)
+        else payload
+    )
+    canonical = json.dumps(
+        [header, claims], sort_keys=True, separators=(",", ":"), default=str
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()[:16]
 
 
 # Fields worth scanning, with a stable label. We scan the response side too.
@@ -272,7 +332,9 @@ def _b64url_json(seg):
         return None
 
 
-def _emit(out, check, sev, sig, r, location, evidence, detail, host_level=False):
+def _emit(
+    out, check, sev, sig, r, location, evidence, detail, host_level=False, group=None
+):
     out.append(
         Finding(
             check,
@@ -284,6 +346,7 @@ def _emit(out, check, sev, sig, r, location, evidence, detail, host_level=False)
             location,
             _snippet(evidence),
             detail,
+            group=group,
         )
     )
 
@@ -294,10 +357,22 @@ def _snippet(s: str, n: int = 60) -> str:
 
 
 def _dedupe(findings):
-    seen, out = set(), []
+    """Collapse repeats, keeping every path the survivor stood for.
+
+    A finding with a `group` merges across paths: one row per distinct thing
+    found, carrying the list of paths it was seen on. Without one, `key()`
+    already includes the path, so nothing merges and `paths` is just that path.
+    """
+    seen, out = {}, []
     for f in findings:
-        k = f.key()
-        if k not in seen:
-            seen.add(k)
+        k = (f.check, f.signature, f.host, f.group) if f.group else f.key()
+        first = seen.get(k)
+        if first is None:
+            seen[k] = f
+            f.paths = [f.path] if f.path else []
             out.append(f)
+        elif f.path and f.path not in first.paths:
+            first.paths.append(f.path)
+    for f in out:
+        f.paths.sort()
     return out

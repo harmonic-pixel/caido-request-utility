@@ -637,3 +637,65 @@ def test_legacy_db_without_decoded_columns_still_scans():
     rows = con.execute("SELECT * FROM requests").fetchall()
     findings = ps.build_checks("xss")[0].run(rows)
     assert "xss" in {f.check for f in findings}
+
+
+def _jwt(claims, header=None):
+    """Build a JWT-shaped token; the signature only has to look like one."""
+    import base64
+    import json as _json
+
+    def seg(obj):
+        raw = _json.dumps(obj, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+    head = seg(header or {"alg": "HS256", "typ": "JWT"})
+    return f"{head}.{seg(claims)}.aaaaaaaabbbbbbbbcccccccc"
+
+
+def test_jwt_findings_dedupe_on_decoded_content(run_check):
+    """A re-issued token is one finding carrying every path it was seen on.
+
+    Refreshing a session mints a new iat/exp and a new signature for the same
+    credential, which used to leave one finding per request.
+    """
+    same_a = _jwt({"sub": "42", "role": "admin", "iat": 1, "exp": 2})
+    same_b = _jwt({"sub": "42", "role": "admin", "iat": 900, "exp": 999})
+    other = _jwt({"sub": "43", "role": "admin", "iat": 1, "exp": 2})
+    rows = [
+        dict(path="/a", headers=f"Authorization: Bearer {same_a}"),
+        dict(path="/b", headers=f"Authorization: Bearer {same_b}"),
+        dict(path="/c", headers=f"Authorization: Bearer {other}"),
+    ]
+
+    findings = run_check("jwt", rows)
+    hmac = [f for f in findings if f.signature == "jwt:hmac-alg"]
+    assert len(hmac) == 2, "one finding per distinct token, not per re-issue"
+    merged = next(f for f in hmac if len(f.paths) > 1)
+    assert merged.paths == ["/a", "/b"]
+    assert next(f for f in hmac if len(f.paths) == 1).paths == ["/c"]
+
+
+def test_secrets_jwt_detector_dedupes_the_same_way(run_check):
+    """The `jwt` detector in the secrets check groups on content too."""
+    same_a = _jwt({"sub": "42", "iat": 1, "exp": 2})
+    same_b = _jwt({"sub": "42", "iat": 900, "exp": 999})
+    rows = [
+        dict(path="/a", body=same_a),
+        dict(path="/b", body=same_b),
+    ]
+
+    tokens = [f for f in run_check("secrets", rows) if f.signature == "jwt"]
+    assert len(tokens) == 1
+    assert tokens[0].paths == ["/a", "/b"]
+
+
+def test_ungrouped_findings_still_dedupe_per_path(run_check):
+    """Only grouped findings merge: everything else keeps path-level dedup."""
+    rows = [
+        dict(path="/a", response_body='{"k":"AKIAIOSFODNN7EXAMPLE"}'),
+        dict(path="/b", response_body='{"k":"AKIAIOSFODNN7EXAMPLE"}'),
+    ]
+
+    keys = [f for f in run_check("secrets", rows) if f.signature == "aws-access-key-id"]
+    assert len(keys) == 2
+    assert sorted(f.paths for f in keys) == [["/a"], ["/b"]]

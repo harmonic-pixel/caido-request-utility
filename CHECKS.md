@@ -12,6 +12,11 @@ pattern is present in traffic you already captured", not "this is exploitable".
 Every finding is a lead to confirm by hand against a system you are authorised
 to test.
 
+**A finding can stand for several requests.** `paths` lists every path an
+occurrence was seen on. Most checks dedupe per path, so it holds one entry; the
+JWT ones dedupe on decoded content, so a merged finding lists them all. A count
+of findings was never a count of requests, and is less so now.
+
 **There is no severity ranking.** `Finding(...)` accepts a severity argument for
 readability at the call site and discards it (`cru/checks/base.py`); the stored
 `_Finding` has no severity field. Output is grouped by check, never ranked.
@@ -104,6 +109,9 @@ tokens no detector knows about.
   Mailgun, PEM private-key blocks, JWTs, `Authorization: Basic`, and a generic
   `password=`/`api_key=`-style assignment. The entropy pass flags base64-ish
   tokens of length ≥ 20 scoring ≥ 4.5 bits, or hex tokens scoring ≥ 3.0.
+- **Dedup:** the `jwt` detector groups on decoded token content, exactly as the
+  `jwt` check does, so a re-issued session token is one finding listing every
+  path. Every other detector dedupes per path as before.
 - **Redaction:** secret evidence is redacted for display (`redact` via
   `_present`) as `abcd…yz (44 chars)`. `--show-secrets` prints it in full.
   `--no-entropy` disables the second pass.
@@ -376,8 +384,14 @@ Host-level.
   signature), and a payload with no `exp` claim (token never expires). An HMAC
   `alg` (`HS256` etc.) is noted as worth testing for a weak or guessable signing
   key.
+- **Dedup:** by decoded content. A token's identity is its header plus its
+  claims minus the volatile ones (`iat`, `exp`, `nbf`, `jti`, `auth_time`,
+  `nonce`), so a session refreshed across a browsing run is **one** finding
+  carrying every path it appeared on, not one per request. Two tokens differing
+  in any other claim stay separate findings.
 - **Limits:** no signature verification and no key cracking — this reads claims
-  only. A token whose segments do not decode as JSON is skipped silently.
+  only. A token whose segments do not decode as JSON is skipped silently, and is
+  not grouped either — it stands on its own path.
 
 ## `infoleak` — stack traces and debug output
 

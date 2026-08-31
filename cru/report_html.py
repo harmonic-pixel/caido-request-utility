@@ -141,9 +141,9 @@ def _locate(finding, rows, panes):
     fallback = on_path[0] if on_path else (same_host[0] if same_host else None)
     if not needle:
         return fallback, "request", None
-    # Findings dedupe, so the path on a finding is one representative row's —
-    # the evidence may sit on a sibling path under the same host. Prefer the
-    # named path, then settle for anywhere on the host.
+    # Findings dedupe, so a finding's path is one representative row's and a
+    # merged one stands for many. Prefer the paths it names, then settle for
+    # anywhere on the host.
     # ponytail: linear scan of the corpus per finding. Fine for a report over a
     # browsing session; index by (host, path) if a big corpus makes it drag.
     for i in on_path + [i for i in same_host if i not in on_path]:
@@ -344,6 +344,13 @@ _TEMPLATE = r"""<!DOCTYPE html>
     box-shadow:0 0 0 2px #ffd54a}
   .msg-note{font-family:var(--mono);font-size:11px;color:var(--ink-soft);
     margin:0 0 12px}
+  .paths{margin:0 0 12px}
+  .paths summary{font-family:var(--mono);font-size:11.5px;color:var(--accent);
+    cursor:pointer}
+  .paths ul{margin:6px 0 0;padding-left:18px;font-family:var(--mono);
+    font-size:11.5px;color:var(--ink);max-height:200px;overflow:auto}
+  .paths li{margin:1px 0;word-break:break-all}
+  .r-title .more{color:var(--ink-soft)}
 
   .empty{text-align:center;color:var(--ink-soft);font-family:var(--mono);
     padding:60px 20px}
@@ -510,6 +517,8 @@ _TEMPLATE = r"""<!DOCTYPE html>
     var loc = f.path ? "" : (" · "+f.location);
     var mth=el("span","mth",f.method||""); title.appendChild(mth);
     title.appendChild(document.createTextNode(" "+(f.path|| "["+f.location+"]")+"  "));
+    var np=(f.paths||[]).length;
+    if(np>1) title.appendChild(el("span","more","+"+(np-1)+" more paths  "));
     var sig=el("span",null,f.signature); sig.style.color="var(--ink-soft)";
     title.appendChild(sig);
     var ev=el("div","r-ev",f.evidence||"");
@@ -519,6 +528,15 @@ _TEMPLATE = r"""<!DOCTYPE html>
 
     var det=el("div","detail");
     if(f.detail) det.appendChild(el("div","note",f.detail));
+    if((f.paths||[]).length>1){
+      var d=el("details","paths");
+      d.appendChild(el("summary",null,
+        "seen on "+f.paths.length+" paths — same finding, deduplicated"));
+      var ul=el("ul");
+      f.paths.forEach(function(pth){ ul.appendChild(el("li",null,pth)); });
+      d.appendChild(ul);
+      det.appendChild(d);
+    }
     var msg=MSG[String(f.row)];
     if(msg){
       var names=Object.keys(msg);

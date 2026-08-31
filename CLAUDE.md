@@ -79,11 +79,18 @@ mixedcontent cleartext csrf
 ```
 
 ### Finding
-`Finding(check, severity, signature, host, method, path, location, evidence, detail)`
+`Finding(check, severity, signature, host, method, path, location, evidence, detail, group)`
 is a constructor shim. **Severity is intentionally accepted but discarded** —
 this tool does not rank by severity (the user removed it deliberately; do not
 re-add it). The stored dataclass `_Finding` has fields:
-`check, signature, host, method, path, location, evidence, detail`. Downstream
+`check, signature, host, method, path, location, evidence, detail, paths, group`.
+`paths` is every path the finding stood for and `group` is an optional dedup
+identity: pass one to `Finding`/`_emit` and `_dedupe` merges occurrences that
+share it into a single finding carrying all their paths, instead of keying on
+`path` as usual. `jwt_identity()` in `cru/checks/base.py` builds one from a
+token's header and its non-volatile claims — that is how the `jwt` check and
+the `jwt` detector in `secrets` collapse a re-issued session token. Anything
+rendering findings should show `paths` when it holds more than one. Downstream
 (dedup, text/JSON output, HTML report) must not depend on severity — `report_html`
 was purged of it, including its filter UI, so don't reintroduce it there either.
 
