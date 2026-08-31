@@ -29,7 +29,7 @@ Burp XML export ──(cru.burp_to_sql)──┘
 | `cru/burp_to_sql.py` | Import a Burp "Save items" XML export into the same schema. |
 | `cru/field_decode.py` | Shared base64/hex decoder. The importers call it at load time. |
 | `cru/report_html.py` | Build the verbose JSON report + a self-contained HTML view from it, including the reconstructed request/response each finding is highlighted in, and a link from each rule to the check's source (`REPO_URL`, `--repo-url`). |
-| `cru/idor_finder.py` | Standalone IDOR-candidate finder (separate tool, own aggregation). `report_html` folds its candidates in as `check="idor"` on a full run. |
+| `cru/idor_finder.py` | Standalone IDOR-candidate finder (separate tool, own aggregation). `report_html` folds its candidates in as `check="idor"` on a full run. Its precision comes from what it refuses — see its module docstring before loosening any of it. |
 | `cru/__main__.py` | `python -m cru <source>` — import, scan and report in one command. Thin: it calls the others. |
 | `cru/sql_util.py` | The DB seam: `execute` and `execute_many`. Override to target another DB. |
 | `tests/conftest.py` | Shared fixtures: `make_db` (in-memory corpus) and `run_check`. |

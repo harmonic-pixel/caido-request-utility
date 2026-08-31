@@ -10,6 +10,15 @@ What it does:
   1. Pulls every request/response row from the CRU `requests` table.
   2. Extracts object-reference-looking identifiers from the path, query string,
      and request body (ints, UUIDs, Mongo ObjectIds, long hex hashes).
+
+     What it refuses to call a reference matters as much as what it accepts:
+       * a JWT, whatever parameter carries it — it is a credential, signed and
+         expiring, and not something you can enumerate; the `jwt` check and the
+         `secrets` check have it covered;
+       * a bare integer on a parameter plainly named for a quantity or a
+         position (`offset`, `per_page`, `x`, `_key`, `min_count`, ...);
+       * a bare integer on an unnamed parameter seen only once, since a single
+         value is no evidence the endpoint enumerates.
   3. Normalises each path into an endpoint *template* so the same route with
      different IDs collapses together (that clustering is the whole point:
      "we saw /api/users/{int} hit with 40 distinct IDs" is a strong signal).
@@ -23,7 +32,7 @@ Usage:
     python -m cru.idor_finder test.db --json > candidates.json
     python -m cru.idor_finder test.db --min-distinct 2 --min-severity medium
 
-Stdlib only.
+Stdlib only, apart from the shared JWT pattern in `cru.field_decode`.
 """
 
 from __future__ import annotations
@@ -36,6 +45,8 @@ import statistics
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from urllib.parse import parse_qsl
+
+from cru.field_decode import JWT_RE
 
 # --------------------------------------------------------------------------- #
 # Identifier detection
@@ -302,6 +313,13 @@ def _leaf_name(key: str) -> str:
 def _param_candidates(pairs, source: str) -> list[Candidate]:
     out: list[Candidate] = []
     for k, v in pairs:
+        # A JWT is a credential, not an object reference. It reaches here on
+        # the parameter *name* — `token` is an id hint — and enumerating one is
+        # not a thing you can do: it is signed, it expires, and the interesting
+        # question about it belongs to the `jwt` check. Skip whatever carries
+        # one, whatever it is called.
+        if JWT_RE.search(str(v)):
+            continue
         t = _classify(v)
         hinted = k.lower() in ID_PARAM_HINTS
         # High-entropy refs (uuid/objectid/hash) are always worth flagging.

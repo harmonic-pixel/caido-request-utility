@@ -38,6 +38,24 @@ def test_the_leaf_name_is_what_counts():
     assert idor._leaf_name("user_id") == "user_id"
 
 
+def test_a_jwt_is_a_credential_not_a_reference():
+    """It reaches the finder on the parameter name — `token` is an id hint.
+
+    Enumerating one is not a thing you can do: it is signed and it expires, and
+    what is interesting about it belongs to the `jwt` check.
+    """
+    import base64
+
+    def seg(obj):
+        return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
+
+    token = f"{seg({'alg': 'RS256'})}.{seg({'sub': '42'})}.aaaaaaaabbbbbbbb"
+
+    assert _pairs({"token": token}) == []
+    # and the same value under a name that is not a hint at all
+    assert _pairs({"whatever": token}) == []
+
+
 def _rows(values, key="thing"):
     """One request per value, shaped like the requests table."""
     return [

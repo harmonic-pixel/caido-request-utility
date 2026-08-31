@@ -62,6 +62,13 @@ A full report (`--check all`) also carries `idor_finder`'s candidates under the
 check name `idor`, so they filter, search and show their request like any other
 finding. The terminal scan does not — run `idor_finder` for those.
 
+`idor_finder` is deliberate about what it will *not* call an object
+reference: a JWT under any parameter name (a signed, expiring credential is not
+enumerable — that is the `jwt` check's business), a bare integer on a parameter
+named for a quantity or a position (`offset`, `per_page`, `x`, `_key`), and a
+bare integer on an unnamed parameter seen only once. A short list you can act on
+beats a long one you have to sift.
+
 In the report, an IDOR candidate lists every ID it was observed with in its own
 dropdown, the way a deduplicated finding lists its paths. A finding's rule name
 links to the source of the check that raised it, so "why did this fire?" is one
