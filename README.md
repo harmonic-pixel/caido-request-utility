@@ -62,6 +62,10 @@ A full report (`--check all`) also carries `idor_finder`'s candidates under the
 check name `idor`, so they filter, search and show their request like any other
 finding. The terminal scan does not — run `idor_finder` for those.
 
+In the report, a finding's rule name links to the source of the check that
+raised it, so "why did this fire?" is one click. The links point at this repo on
+`main`; `--repo-url` aims them at a fork or a tag instead.
+
 The decoded view spells JWTs out rather than leaving them as opaque tokens:
 each one appears as `{"alg": "HS256", ...}.{"sub": "42", ...}.<signature>`, so
 the claims are readable in the report's `#decoded` tab and scannable by every

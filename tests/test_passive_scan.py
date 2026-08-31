@@ -656,6 +656,19 @@ def test_report_points_at_the_message_the_evidence_came_from(tmp_path, make_db):
     assert '"tail":"zzz"' in pane[rec["match"][1] :]
 
 
+def test_every_finding_links_to_the_rule_that_raised_it():
+    """The dropdown's rule name is a link to the check's source upstream."""
+    from cru import report_html
+
+    urls = report_html._rule_urls(report_html.REPO_URL)
+
+    assert set(urls) == set(CHECKS) | {"idor"}, "a rule with nowhere to point"
+    assert urls["security-headers"].endswith(
+        "cru/checks/security_headers.py#L10"
+    ), urls["security-headers"]
+    assert all(u.startswith(report_html.REPO_URL + "/cru/") for u in urls.values())
+
+
 def test_report_includes_idor_candidates(tmp_path, make_db):
     """IDOR rides along on a full run so it filters and reads like a check."""
     from cru import report_html

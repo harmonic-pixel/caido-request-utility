@@ -25,6 +25,11 @@ A full run (`--check all`) also folds in `idor_finder`'s candidates under the
 check name `idor`, so they filter, search and show their request like any other
 finding.
 
+Each finding's rule name links to the source of the check that raised it,
+resolved from the registry against `REPO_URL` (the upstream repo, on `main`,
+where the rules land after merging). `--repo-url` points them somewhere else —
+a fork, a tag, a local mirror.
+
 Usage:
     python -m cru.report_html your.db -o report.html          # writes .html + .json
     python -m cru.report_html your.db -o out.html --json out.json
@@ -36,15 +41,43 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import inspect
 import json
 import sqlite3
 from dataclasses import asdict
+from pathlib import Path
+from typing import Any
 
 from cru import idor_finder as idor
 from cru import passive_scan as ps
+from cru.checks import CHECKS
 from cru.checks.base import Finding
 
 TOOL_VERSION = "1.0"
+
+# Where the rules live once this is merged upstream. Each finding links to the
+# module its check is implemented in, at the class's own line.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_URL = "https://github.com/Skelmis/caido-request-utility/blob/main"
+
+
+def _rule_urls(repo_url):
+    """Map each check name to a link to the source of the check that raised it."""
+    urls = {}
+    # `idor` is not a registered check; its rule is the aggregation function.
+    sources: dict[str, Any] = dict(CHECKS)
+    sources["idor"] = idor.analyse
+    for name, obj in sources.items():
+        try:
+            module = inspect.getmodule(obj)
+            path = Path(inspect.getfile(obj)).relative_to(_REPO_ROOT).as_posix()
+            line = inspect.getsourcelines(obj)[1]
+        except (OSError, TypeError, ValueError):
+            continue
+        if module is None:
+            continue
+        urls[name] = f"{repo_url}/{path}#L{line}"
+    return urls
 
 
 def idor_findings(db, table):
@@ -226,8 +259,9 @@ def build_messages(rows, findings, show_secrets):
     return {"panes": panes, "locations": locations}
 
 
-def build_report_doc(rows, findings, meta_extra, messages=None):
+def build_report_doc(rows, findings, meta_extra, messages=None, repo_url=REPO_URL):
     """The verbose JSON document — the intermediary the HTML is built from."""
+    rule_urls = _rule_urls(repo_url)
     by_check, by_host = {}, {}
     for f in findings:
         by_check[f.check] = by_check.get(f.check, 0) + 1
@@ -253,6 +287,7 @@ def build_report_doc(rows, findings, meta_extra, messages=None):
         rec.update(asdict(f))
         row, pane, match = locations[i] if i < len(locations) else (None, None, None)
         rec.update({"row": row, "pane": pane, "match": match})
+        rec["rule_url"] = rule_urls.get(f.check)
         if row is not None:
             # Keep the request and response of any row a finding points at, and
             # a decoded pane only when a finding actually landed in one.
@@ -379,6 +414,9 @@ _TEMPLATE = r"""<!DOCTYPE html>
     font-family:var(--mono);font-size:11.5px}
   .kv dt{color:var(--ink-soft)} .kv dd{margin:0;color:var(--ink);
     word-break:break-all}
+  .kv dd a{color:var(--accent);text-decoration:none;
+    border-bottom:1px solid rgba(18,137,122,.35)}
+  .kv dd a:hover{border-bottom-color:var(--accent)}
   .evidence{font-family:var(--mono);font-size:12px;background:#0f1420;
     color:#e7edf6;padding:10px 12px;border-radius:6px;margin:8px 0 12px;
     white-space:pre-wrap;word-break:break-all;max-height:220px;overflow:auto}
@@ -617,7 +655,20 @@ _TEMPLATE = r"""<!DOCTYPE html>
     [["rule",f.signature],["check",f.check],["host",f.host||"—"],
      ["method",f.method||"—"],["path",f.path||"—"],
      ["location",f.location||"—"]].forEach(function(p){
-      kv.appendChild(el("dt",null,p[0])); kv.appendChild(el("dd",null,p[1]));});
+      kv.appendChild(el("dt",null,p[0]));
+      var dd=el("dd");
+      // The rule name links to the check that raised it. href is built from
+      // the registry, never from finding text, so nothing attacker-controlled
+      // reaches a URL.
+      if(p[0]==="rule" && f.rule_url){
+        var a=el("a",null,p[1]);
+        a.href=f.rule_url; a.target="_blank"; a.rel="noopener noreferrer";
+        a.title="source of this check";
+        dd.appendChild(a);
+      } else {
+        dd.textContent=p[1];
+      }
+      kv.appendChild(dd);});
     det.appendChild(kv);
     row.appendChild(det);
     hd.addEventListener("click",function(){row.classList.toggle("open");});
@@ -666,6 +717,11 @@ def main(argv=None):
     ap.add_argument("--table", default="requests")
     ap.add_argument("--check", default="all")
     ap.add_argument("--show-secrets", action="store_true")
+    ap.add_argument(
+        "--repo-url",
+        default=REPO_URL,
+        help="base URL each rule links to (default: the upstream repo on main)",
+    )
     args = ap.parse_args(argv)
 
     # Re-render path: JSON is the intermediary, so we can rebuild HTML from it.
@@ -697,6 +753,7 @@ def main(argv=None):
             "secrets_redacted": not args.show_secrets,
         },
         messages,
+        repo_url=args.repo_url,
     )
 
     json_path = _json_path_for(args.out, args.json)
