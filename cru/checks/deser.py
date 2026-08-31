@@ -112,17 +112,22 @@ _PICKLE_OPCODES = (
     b"cposix\nsystem",
     b"csubprocess",
     b"cnt\nsystem",
-    b"\x80\x02",
-    b"\x80\x03",
-    b"\x80\x04",
-    b"\x80\x05",
 )
+
+_PICKLE_PROTOS = (b"\x02", b"\x03", b"\x04", b"\x05")
 
 
 def _looks_pickle(raw: bytes) -> bool:
-    head = raw[:2]
-    if head[:1] == b"\x80" and head[1:2] in (b"\x02", b"\x03", b"\x04", b"\x05"):
-        return True
+    """Whether decoded bytes look like a pickle stream.
+
+    A protocol-2+ pickle opens with PROTO (`\x80` + protocol) and closes with
+    STOP (`.`). Both ends are required on purpose: those two opening bytes turn
+    up constantly inside ordinary binary — roughly one blob in 16k — so matching
+    them loose, anywhere in the first 64 bytes, flagged base64-ish URL segments
+    as pickles. The textual opcodes below are distinctive enough to stand alone.
+    """
+    if raw[:1] == b"\x80" and raw[1:2] in _PICKLE_PROTOS:
+        return raw.endswith(b".")
     return any(op in raw[:64] for op in _PICKLE_OPCODES)
 
 

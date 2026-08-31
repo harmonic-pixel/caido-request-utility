@@ -89,9 +89,15 @@ vectors.
   Ruby Marshal (`BAh`). Plus 4 magic-byte signatures matched against
   base64-*decoded* blobs (`b64_blobs`): Java `AC ED 00 05`, .NET
   BinaryFormatter, Ruby Marshal `04 08`, gzip `1F 8B`. Python pickle is detected
-  by protocol opcode (`\x80\x02`–`\x80\x05`) or a `c__builtin__` /
-  `cos\nsystem` / `csubprocess` opcode in the first 64 bytes.
-- **Limits:** `php-serialized-array` and `gzip-wrapped-blob` fire on benign
+  either as a full protocol-2+ stream — opening PROTO (`\x80\x02`–`\x80\x05`)
+  **and** closing STOP (`.`) — or by a `c__builtin__` / `cos\nsystem` /
+  `csubprocess` opcode in the first 64 bytes.
+- **Limits:** both ends of a pickle stream are required because those two
+  opening bytes occur constantly inside ordinary binary — about one base64 blob
+  in 16k — so a loose match turned base64-ish URL segments (a Google avatar
+  path, say) into pickle findings. The cost is that a *truncated* or embedded
+  protocol-2+ pickle is missed unless it carries one of the textual opcodes.
+  `php-serialized-array` and `gzip-wrapped-blob` fire on benign
   traffic by design — a serialized array is often just data, and a gzip blob is
   reported so you decompress it yourself. Gzip blobs are **not** decompressed
   and re-scanned. `__VIEWSTATE` presence says nothing about whether MAC

@@ -39,6 +39,7 @@ def sigs_of(findings):
 # --------------------------------------------------------------------------- #
 
 import base64 as _b64
+import pickle as _pickle
 
 
 def b64(s):
@@ -57,6 +58,14 @@ POSITIVE = {
         (
             dict(method="POST", body='data=O:8:"stdClass":1:{s:3:"cmd";s:2:"id";}'),
             "php-serialized-object",
+        ),
+        (
+            dict(
+                method="POST",
+                body="state="
+                + _b64.b64encode(_pickle.dumps({"a": 1}, protocol=4)).decode(),
+            ),
+            "python-pickle",
         ),
     ],
     "secrets": [
@@ -246,7 +255,14 @@ POSITIVE = {
 
 # Benign rows that must NOT trigger the given check.
 NEGATIVE = {
-    "deser": dict(method="POST", body="name=John&city=Wellington"),
+    # The avatar URL is deliberate: its base64-ish segment decodes to bytes that
+    # happen to contain \x80\x04, which used to read as a pickle PROTO opcode.
+    "deser": dict(
+        method="POST",
+        body="name=John&city=Wellington",
+        response_body='{"picture":"https://lh3.googleusercontent.com/a/'
+        'ACg8ocI-B8h3xWwEP-gAT8dQeH_UpcjzdyOIPIO1-WwJARJaAbtIgQ=s96-c"}',
+    ),
     # The ObjectId is deliberate: 24-hex resource IDs are enumeration
     # candidates for idor_finder, not secrets, so entropy must ignore them.
     "secrets": dict(
