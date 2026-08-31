@@ -656,6 +656,58 @@ def test_report_points_at_the_message_the_evidence_came_from(tmp_path, make_db):
     assert '"tail":"zzz"' in pane[rec["match"][1] :]
 
 
+def test_masking_hides_the_credential_not_the_header_name(tmp_path, make_db):
+    """`Authorization: Basic` is context, not the secret.
+
+    The evidence is what gets redacted and masked, so a detector that matches
+    its own label blanks the label too and leaves the request unreadable.
+    """
+    from cru import report_html
+
+    db = tmp_path / "b.db"
+    credential = "dXNlcjpwYXNzd29yZDEyMw=="
+    con = make_db([dict(headers=f"Authorization: Basic {credential}")])
+    disk = sqlite3.connect(str(db))
+    con.backup(disk)
+    disk.close()
+
+    _rows, findings, messages = report_html.collect(
+        str(db), "requests", "secrets", False
+    )
+    doc = report_html.build_report_doc(_rows, findings, {"db": str(db)}, messages)
+    rec = next(f for f in doc["findings"] if f["signature"] == "basic-auth-header")
+
+    pane = doc["messages"][str(rec["row"])][rec["pane"]]
+    assert "Authorization: Basic" in pane, "the header name must survive masking"
+    assert credential not in pane, "the credential must not"
+
+
+def test_a_private_key_is_masked_not_just_its_marker(tmp_path, make_db):
+    """Matching only the BEGIN line hid the label and left the key in the clear."""
+    from cru import report_html
+
+    db = tmp_path / "k.db"
+    material = "MIIEowIBAAKCAQEAsecretkeymaterial1234567890"
+    pem = (
+        "-----BEGIN RSA PRIVATE KEY-----\n"
+        f"{material}\n"
+        "-----END RSA PRIVATE KEY-----"
+    )
+    con = make_db([dict(response_body=pem)])
+    disk = sqlite3.connect(str(db))
+    con.backup(disk)
+    disk.close()
+
+    _rows, findings, messages = report_html.collect(
+        str(db), "requests", "secrets", False
+    )
+    doc = report_html.build_report_doc(_rows, findings, {"db": str(db)}, messages)
+    rec = next(f for f in doc["findings"] if f["signature"] == "private-key-block")
+
+    pane = doc["messages"][str(rec["row"])][rec["pane"]]
+    assert material not in pane, "the key material must not survive masking"
+
+
 def test_every_finding_links_to_the_rule_that_raised_it():
     """The dropdown's rule name is a link to the check's source upstream."""
     from cru import report_html

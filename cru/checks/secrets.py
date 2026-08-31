@@ -51,7 +51,15 @@ _SECRET_DETECTORS = [
     ("mailgun-key", re.compile(r"\bkey-[0-9a-f]{32}\b"), "medium"),
     (
         "private-key-block",
-        re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"),
+        # The whole block, not just the opening marker: the evidence is what
+        # gets masked, so matching the marker alone hid the label and left the
+        # key material itself in plain sight. Falls back to the marker when the
+        # end is missing (a truncated field), which is better than no finding.
+        re.compile(
+            r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"
+            r"[\s\S]{0,20000}?-----END [A-Z ]{0,40}PRIVATE KEY-----"
+            r"|-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"
+        ),
         "high",
     ),
     (
@@ -63,7 +71,10 @@ _SECRET_DETECTORS = [
     ),
     (
         "basic-auth-header",
-        re.compile(r"(?i)authorization:\s*basic\s+[A-Za-z0-9+/=]{8,}"),
+        # Capture only the credential. The evidence is what gets redacted in the
+        # output and masked in the report's message, and `Authorization: Basic`
+        # is not the secret — blanking it just makes the request unreadable.
+        re.compile(r"(?i)authorization:\s*basic\s+([A-Za-z0-9+/=]{8,})"),
         "medium",
     ),
     # Generic assignment — noisy, so it's reported at review tier.

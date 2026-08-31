@@ -128,7 +128,13 @@ tokens no detector knows about.
   `jwt` check does, so a re-issued session token is one finding listing every
   path. Every other detector dedupes per path as before.
 - **Redaction:** secret evidence is redacted for display (`redact` via
-  `_present`) as `abcd…yz (44 chars)`. `--show-secrets` prints it in full.
+  `_present`) as `abcd…yz (44 chars)`, and masked in the report's message pane.
+  A detector's match **is** the thing that gets hidden, so each one matches the
+  credential and not its surroundings: `basic-auth-header` captures the token
+  and leaves `Authorization: Basic` readable, and `private-key-block` matches
+  the whole PEM block rather than the `BEGIN` line, which would otherwise hide
+  the marker and leave the key material in plain sight. `--show-secrets` prints
+  it in full.
   `--no-entropy` disables the second pass.
 - **Limits:** `generic-secret-assignment` is deliberately noisy — it catches
   `password=` in traffic that is merely *about* passwords. The entropy pass

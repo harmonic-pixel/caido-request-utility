@@ -189,6 +189,12 @@ adding an all-or-nothing pattern.
   that rejects DTDs/entities) — don't loosen this; it's the XXE surface the
   `xxe` check exists to catch.
 - Secret findings are redacted by default (`_present`); `--show-secrets` reveals.
+- **A `secrets` detector's match is what gets hidden** — in the finding and in
+  the report's message pane. Match the credential, not its label: too wide and
+  the pane loses the context that makes it readable, too narrow and the secret
+  itself survives masking. Use a capture group when the pattern needs a prefix
+  to anchor on (`basic-auth-header`), and match the whole block when the marker
+  is not the secret (`private-key-block`).
 
 ## Schema (the `requests` table)
 
