@@ -187,8 +187,10 @@ minified bundle is full of them.
 
 **Unwrapping repeats.** `_iter_decoded` scans what each token decoded to, breadth
 first, so base64-of-hex-of-payload comes out as plaintext. It is bounded by
-`_MAX_DEPTH` layers and `_MAX_DECODES` attempts per field, and by the set of
-plaintexts already seen — the alphabets overlap (a hex run is valid base64
+`_MAX_DEPTH` layers, by `_MAX_NESTED_DECODES` attempts per field *below the
+first layer* — the first is the scan that always happened, and capping it would
+lose coverage that predates the unwrapping — and by the set of plaintexts
+already seen — the alphabets overlap (a hex run is valid base64
 too), so both branches can reach the same bytes. No cycle is possible: every
 layer is smaller than the token it came out of.
 

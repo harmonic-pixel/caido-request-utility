@@ -66,8 +66,9 @@ Two limits worth knowing:
 
 - **Four layers, then it stops.** What a token decodes to is scanned again, so
   base64-of-hex-of-payload comes out as plaintext, but a chain deeper than
-  `_MAX_DEPTH` does not — and a field carrying more tokens than `_MAX_DECODES`
-  stops being unwrapped where the budget runs out.
+  `_MAX_DEPTH` does not — and once a field has spent `_MAX_NESTED_DECODES`
+  attempts below its first layer, the rest of it is unwrapped only once. The
+  first layer is never capped.
 - **A database without the columns loses it silently.** If the `*_decoded`
   columns are absent, `load_rows` falls back to the base columns and no
   `#decoded` views are produced — no error, just less coverage. Both CRU import

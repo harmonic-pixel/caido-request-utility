@@ -478,14 +478,19 @@ def test_the_same_plaintext_is_carried_once():
     assert view.count(payload) == 1, view
 
 
-def test_unwrapping_is_bounded_by_a_budget(monkeypatch):
-    """A response can carry thousands of tokens; the field still has a ceiling."""
-    monkeypatch.setattr(field_decode, "_MAX_DECODES", 10)
-    field = " ".join(b64(f"value-number-{i}") for i in range(200))
+def test_the_budget_bounds_the_nesting_and_not_the_first_layer(monkeypatch):
+    """The first layer is the scan that has always happened.
 
-    view = field_decode.decoded_view(field)
+    Only what the unwrapping *adds* is on a budget — capping the first layer
+    would make a field with many tokens lose decoding it used to get.
+    """
+    monkeypatch.setattr(field_decode, "_MAX_NESTED_DECODES", 2)
+    wrapped = [b64(b64(f"value-number-{i}")) for i in range(30)]
 
-    assert 0 < view.count("value-number-") <= 10
+    view = field_decode.decoded_view(" ".join(wrapped))
+
+    assert view.count("dmFsdWUtbnVtYmVy") == 30, "the first layer is not capped"
+    assert 0 < view.count("value-number-") <= 2, "the nested layer is"
 
 
 def test_decoded_view_expands_jwts_as_dot_joined_dicts():

@@ -60,9 +60,14 @@ JWT_DECODED_RE = re.compile(r'\{"alg":.*\}\.[A-Za-z0-9_-]*')
 # Bound the work per field: a response can carry a great many tokens.
 _MAX_JWTS = 64
 # How many layers of wrapping to unwrap (base64 of hex of the payload is two),
-# and how many decode attempts one field is worth in total.
+# and how many decode attempts the layers *below the first* are worth per field.
+# The first layer is the scan that has always happened and stays uncapped —
+# `_MAX_FIELD` already bounds it, and cutting it short would lose coverage that
+# predates the unwrapping. What recursion adds is small: over a 565-request
+# corpus the busiest field spent 24 attempts below the first layer, and 99% of
+# fields spent eight or fewer.
 _MAX_DEPTH = 4
-_MAX_DECODES = 20_000
+_MAX_NESTED_DECODES = 500
 
 
 def _b64_decode(tok: str):
@@ -124,33 +129,40 @@ def _decoded_text(raw: bytes) -> str | None:
     return text
 
 
-def _decode_layer(text: str, budget: list[int]):
-    """Yield the plaintext of every base64/hex token in one pass over `text`."""
+def _decode_layer(text: str, budget: list[int] | None):
+    """Yield the plaintext of every base64/hex token in one pass over `text`.
+
+    `budget` is the remaining decode attempts, or None for the first layer,
+    which is not on a budget.
+    """
     for m in _B64_RE.finditer(text):
-        if budget[0] <= 0:
-            return
-        budget[0] -= 1
+        if budget is not None:
+            if budget[0] <= 0:
+                return
+            budget[0] -= 1
         dec = _decoded_text(_b64_decode(m.group(0)) or b"")
         if dec:
             yield dec
 
     for m in _HEX_PCT_RE.finditer(text):
-        if budget[0] <= 0:
-            return
-        budget[0] -= 1
+        if budget is not None:
+            if budget[0] <= 0:
+                return
+            budget[0] -= 1
         raw = bytes(int(h, 16) for h in re.findall(r"%([0-9A-Fa-f]{2})", m.group(0)))
         dec = _decoded_text(raw)
         if dec:
             yield dec
 
     for m in _HEX_RUN_RE.finditer(text):
-        if budget[0] <= 0:
+        if budget is not None and budget[0] <= 0:
             return
         tok = m.group(0)
         h = tok[2:] if tok.lower().startswith("0x") else tok
         if len(h) % 2:
             continue
-        budget[0] -= 1
+        if budget is not None:
+            budget[0] -= 1
         try:
             raw = bytes.fromhex(h)
         except ValueError:
@@ -170,19 +182,19 @@ def _iter_decoded(text: str):
     What keeps that cheap: every layer is smaller than the token it came out
     of, so there is no cycle to fall into; `seen` drops a plaintext reached
     twice, which the overlapping alphabets make likely (a hex run is valid
-    base64 too, so both branches can arrive at the same bytes); and `budget`
-    caps the decode attempts for the whole field, however many tokens a
-    response turns out to carry.
+    base64 too, so both branches can arrive at the same bytes); and the layers
+    below the first draw on one budget for the whole field, so a response that
+    carries a great many wrapped tokens cannot turn into a great deal of work.
     """
     if not text:
         return
     seen = {text}
     queue = [(text, 0)]
-    budget = [_MAX_DECODES]
+    budget = [_MAX_NESTED_DECODES]
 
-    while queue and budget[0] > 0:
+    while queue:
         src, depth = queue.pop(0)
-        for dec in _decode_layer(src, budget):
+        for dec in _decode_layer(src, budget if depth else None):
             if dec in seen:
                 continue
             seen.add(dec)
