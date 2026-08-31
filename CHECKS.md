@@ -1,7 +1,8 @@
 # CHECKS.md
 
-Per-check reference for `cru/passive_scan.py`. What each check catches, the patterns
-behind it, and where it stops.
+Per-check reference for the checks in `cru/checks/` (one module per check, run by
+`cru/passive_scan.py`). What each check catches, the patterns behind it, and where
+it stops.
 
 ## How to read this
 
@@ -12,7 +13,7 @@ Every finding is a lead to confirm by hand against a system you are authorised
 to test.
 
 **There is no severity ranking.** `Finding(...)` accepts a severity argument for
-readability at the call site and discards it (`cru/passive_scan.py:67`); the stored
+readability at the call site and discards it (`cru/checks/base.py`); the stored
 `_Finding` has no severity field. Output is grouped by check, never ranked.
 Where an entry below says a signal is "strong" or "weaker", that is guidance for
 your triage, not something the tool sorts on.
