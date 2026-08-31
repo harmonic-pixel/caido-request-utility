@@ -45,18 +45,18 @@ over creating new scripts.
 ## Setup & commands
 
 ```bash
-uv sync                                  # pytest, defusedxml, black, ruff, ty
+uv sync                                                     # pytest, defusedxml, black, ruff, ty
 
-pytest -q                                # run the whole suite
-pytest -q -k xss                         # one check
-black . && ruff check . && ty check      # formatting, lint, types — all must pass
+uv run pytest -q                                            # run the whole suite
+uv run pytest -q -k xss                                     # one check
+uv run black . && uv run ruff check . && uv run ty check    # format, lint, types — all must pass
 
-python -m cru export.csv -o report.html                    # import + scan + report
-python -m cru.passive_scan corpus.db --check all           # scan
-python -m cru.passive_scan corpus.db --check sqli --json   # one check, JSON out
-python -m cru.burp_to_sql history.xml -o corpus.db         # import Burp export
-python -m cru.report_html corpus.db -o report.html         # JSON + HTML report
-python -m cru.idor_finder corpus.db                        # IDOR candidates
+uv run python -m cru export.csv -o report.html              # import + scan + report
+uv run python -m cru.passive_scan corpus.db --check all     # scan
+uv run python -m cru.passive_scan corpus.db --check sqli --json  # one check, JSON out
+uv run python -m cru.burp_to_sql history.xml -o corpus.db   # import Burp export
+uv run python -m cru.report_html corpus.db -o report.html   # JSON + HTML report
+uv run python -m cru.idor_finder corpus.db                  # IDOR candidates
 ```
 
 `passive_scan`, `report_html`, `field_decode` and `idor_finder` are **stdlib
@@ -228,8 +228,8 @@ passive.
 
 ## Working agreements
 
-- **Run `pytest -q` before and after changes**, and `black . && ruff check . &&
-  ty check`. All four must be green. Every check needs a positive and a negative
+- **Run `uv run pytest -q` before and after changes**, and `uv run black . &&
+  uv run ruff check . && uv run ty check`. All four must be green. Every check needs a positive and a negative
   case; add both when adding a check.
 - **Keep `CHECKS.md` accurate**, and the check table in `README.md` with it. If
   you change what a check catches or its patterns, update both. (The suite guards

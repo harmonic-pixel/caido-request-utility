@@ -40,10 +40,10 @@ Burp XML export ─(burp_to_sql)─┘
 One command does the lot — import, scan, report:
 
 ```bash
-python -m cru export.csv -o report.html   # CSV in, findings and a report out
-python -m cru export.csv                  # import and print the findings
-python -m cru corpus.db -o report.html    # already imported, just report
-python -m cru history.xml --db burp.db    # a Burp export instead
+uv run python -m cru export.csv -o report.html  # CSV in, findings and a report out
+uv run python -m cru export.csv                 # import and print the findings
+uv run python -m cru corpus.db -o report.html   # already imported, just report
+uv run python -m cru history.xml --db burp.db   # a Burp export instead
 ```
 
 The source is recognised by extension: `.csv` is a Caido export, `.xml` a Burp
@@ -51,11 +51,11 @@ one, anything else is taken to be a database that is already built. The steps
 still stand on their own:
 
 ```bash
-python -m cru.passive_scan corpus.db --check all         # every check
-python -m cru.passive_scan corpus.db --check sqli --json # one check, JSON out
-python -m cru.passive_scan corpus.db --show-secrets      # unredact secret matches
-python -m cru.report_html corpus.db -o report.html       # JSON + self-contained HTML
-python -m cru.idor_finder corpus.db                      # IDOR candidates (separate tool)
+uv run python -m cru.passive_scan corpus.db --check all          # every check
+uv run python -m cru.passive_scan corpus.db --check sqli --json  # one check, JSON out
+uv run python -m cru.passive_scan corpus.db --show-secrets       # unredact secret matches
+uv run python -m cru.report_html corpus.db -o report.html        # JSON + self-contained HTML
+uv run python -m cru.idor_finder corpus.db                       # IDOR candidates (separate tool)
 ```
 
 A full report (`--check all`) also carries `idor_finder`'s candidates under the
@@ -158,8 +158,8 @@ is not parsed.
 ### Importing
 
 ```bash
-python -m cru.burp_to_sql history.xml -o burp.db            # import
-python -m cru.burp_to_sql history.xml -o burp.db --replace  # drop existing table first
+uv run python -m cru.burp_to_sql history.xml -o burp.db            # import
+uv run python -m cru.burp_to_sql history.xml -o burp.db --replace  # drop existing table first
 ```
 
 Items are streamed rather than loaded as one tree, so large exports do not need
@@ -169,11 +169,11 @@ skipped and counted); `<response>`, `<host>`, `<port>`, `<protocol>`,
 
 ### Notes
 
-- **`pip install defusedxml`** before importing an export you did not produce
+- **`uv add defusedxml`** before importing an export you did not produce
   yourself. Without it the stdlib fallback rejects any `<!DOCTYPE>` or
   `<!ENTITY>` outright — safe, but an export that legitimately contains a DTD
   will fail to parse rather than being trusted.
-- **`pip install brotli`** if the target serves `Content-Encoding: br`, or those
+- **`uv add brotli`** if the target serves `Content-Encoding: br`, or those
   response bodies stay compressed and unreadable to the checks. gzip and deflate
   need nothing extra.
 - The export carries no timestamps, so `created_at` and `response_created_at`
