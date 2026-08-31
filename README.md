@@ -190,6 +190,16 @@ skipped and counted); `<response>`, `<host>`, `<port>`, `<protocol>`,
 - Better base64/hex decoding: the current 16-character floor on candidate
   tokens silently misses short wrapped payloads, so judge a candidate on the
   entropy and printability of what it decodes to rather than on its length
+- Make the HTML report hold up on a large corpus — 100k requests, and the
+  findings that come with them. The report is a single self-contained file
+  that embeds the whole document as JSON, parses it on load and renders every
+  visible finding as DOM: at that size the page gets big to download, slow to
+  open, and slow again on each filter or search, since `render()` rebuilds the
+  list from scratch. Worth doing: virtualise the list so only the rows on
+  screen exist, debounce the search, keep the message panes out of the initial
+  payload (fetch or lazily expand them), and put a ceiling on how much of a
+  body is embedded at all. The measurement comes first — build a corpus at
+  that scale and find out which of those actually hurts
 
 *P.s. You should contribute ideas! If you have an idea of what to do with raw request data, open an issue.*
 
