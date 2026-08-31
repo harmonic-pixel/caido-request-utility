@@ -88,7 +88,7 @@ re-add it). The stored dataclass `_Finding` has fields:
 `check, signature, host, method, path, location, evidence, detail, paths, group,
 ids, rules`. `ids` and `rules` are listings the report renders as dropdowns: the
 values an IDOR candidate was seen with, and every place a `code` rule matched.
-`paths` is every path the finding stood for and `group` is an optional dedup
+`paths` is every request the finding stood for, as `METHOD /path`, and `group` is an optional dedup
 identity: pass one to `Finding`/`_emit` and `_dedupe` merges occurrences that
 share it into a single finding carrying all their paths, instead of keying on
 `path` as usual. `jwt_identity()` in `cru/checks/base.py` builds one from a

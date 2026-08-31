@@ -36,8 +36,11 @@ class _Finding:
     location: str  # which field: request-body, response-headers, ...
     evidence: str  # redacted/truncated snippet
     detail: str = ""
-    # Every path this finding was seen on. One entry for an ordinary finding;
-    # several once `group` has merged occurrences that differ only by path.
+    # Every request this finding was seen on, as "METHOD /path". One entry for
+    # an ordinary finding; several once `group` has merged occurrences. The
+    # method is part of it because a merged finding spans requests: listing a
+    # bare path implicates the OPTIONS preflight alongside the GET that
+    # actually carried the token.
     paths: list[str] = field(default_factory=list)
     # An identity that replaces `key()` for dedup: occurrences sharing it are
     # the same finding wearing different paths. `jwt_identity` builds one.
@@ -419,12 +422,13 @@ def _dedupe(findings):
     for f in findings:
         k = (f.check, f.signature, f.host, f.group) if f.group else f.key()
         first = seen.get(k)
+        where = f"{f.method} {f.path}".strip()
         if first is None:
             seen[k] = f
-            f.paths = [f.path] if f.path else []
+            f.paths = [where] if f.path else []
             out.append(f)
-        elif f.path and f.path not in first.paths:
-            first.paths.append(f.path)
+        elif f.path and where not in first.paths:
+            first.paths.append(where)
     for f in out:
         f.paths.sort()
     return out

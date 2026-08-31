@@ -661,7 +661,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
     }
     if((f.paths||[]).length>1){
       det.appendChild(listing(f.paths,
-        "seen on "+f.paths.length+" paths — same finding, deduplicated"));
+        "seen on "+f.paths.length+" requests — same finding, deduplicated"));
     }
     if((f.rules||[]).length>1){
       det.appendChild(listing(f.rules,
@@ -695,7 +695,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
       det.appendChild(el("div","msg-note", f.match
         ? "Reconstructed from the stored fields; the match is highlighted."
         : "Reconstructed from the stored fields. Nothing to highlight — this "
-          +"finding reports something absent or derived, not a quoted string."));
+          +"finding is about what the response does not contain."));
     } else if(f.evidence){
       det.appendChild(el("div","evidence",f.evidence));
     }

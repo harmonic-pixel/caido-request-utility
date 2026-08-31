@@ -891,8 +891,10 @@ def test_jwt_findings_dedupe_on_decoded_content(run_check):
     hmac = [f for f in findings if f.signature == "jwt:hmac-alg"]
     assert len(hmac) == 2, "one finding per distinct token, not per re-issue"
     merged = next(f for f in hmac if len(f.paths) > 1)
-    assert merged.paths == ["/a", "/b"]
-    assert next(f for f in hmac if len(f.paths) == 1).paths == ["/c"]
+    # The method rides along: a merged finding spans requests, and a bare path
+    # would implicate the OPTIONS preflight beside the GET that carried it.
+    assert merged.paths == ["GET /a", "GET /b"]
+    assert next(f for f in hmac if len(f.paths) == 1).paths == ["GET /c"]
 
 
 def test_secrets_jwt_detector_dedupes_the_same_way(run_check):
@@ -906,7 +908,7 @@ def test_secrets_jwt_detector_dedupes_the_same_way(run_check):
 
     tokens = [f for f in run_check("secrets", rows) if f.signature == "jwt"]
     assert len(tokens) == 1
-    assert tokens[0].paths == ["/a", "/b"]
+    assert tokens[0].paths == ["GET /a", "GET /b"]
 
 
 def test_code_sees_python_inside_a_json_string(run_check):
@@ -1062,4 +1064,4 @@ def test_ungrouped_findings_still_dedupe_per_path(run_check):
 
     keys = [f for f in run_check("secrets", rows) if f.signature == "aws-access-key-id"]
     assert len(keys) == 2
-    assert sorted(f.paths for f in keys) == [["/a"], ["/b"]]
+    assert sorted(f.paths for f in keys) == [["GET /a"], ["GET /b"]]

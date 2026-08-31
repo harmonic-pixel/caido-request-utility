@@ -12,8 +12,10 @@ pattern is present in traffic you already captured", not "this is exploitable".
 Every finding is a lead to confirm by hand against a system you are authorised
 to test.
 
-**A finding can stand for several requests.** `paths` lists every path an
-occurrence was seen on. Most checks dedupe per path, so it holds one entry; the
+**A finding can stand for several requests.** `paths` lists every request an
+occurrence was seen on, as `METHOD /path` — the method is part of it because a
+merged finding spans requests, and a bare path would implicate the OPTIONS
+preflight beside the GET that actually carried the token. Most checks dedupe per path, so it holds one entry; the
 JWT ones dedupe on decoded content, so a merged finding lists them all. A count
 of findings was never a count of requests, and is less so now.
 
@@ -419,6 +421,10 @@ Host-level.
   signature), and a payload with no `exp` claim (token never expires). An HMAC
   `alg` (`HS256` etc.) is noted as worth testing for a weak or guessable signing
   key.
+- **Evidence:** the token itself, in every signature. What is wrong with a JWT
+  is a property of its header, not a string in the traffic, so an evidence of
+  `alg=hs256` left the report with a finding it could not point at; the
+  description is in the detail and the token is what gets highlighted.
 - **Dedup:** by decoded content. A token's identity is its header plus its
   claims minus the volatile ones (`iat`, `exp`, `nbf`, `jti`, `auth_time`,
   `nonce`), so a session refreshed across a browsing run is **one** finding

@@ -38,6 +38,12 @@ class JwtScanner:
                     # the same credential. The paths merge onto the survivor.
                     ident = jwt_identity(tok)
                     alg = str(header.get("alg", "")).lower()
+                    # Every signature quotes the token itself. What is wrong
+                    # with it is a property of its header, not a string in the
+                    # traffic, so describing it in the evidence left the report
+                    # with a finding it could not point at. The description
+                    # belongs in the detail; the token is what you go and look
+                    # at.
                     if alg == "none":
                         _emit(
                             out,
@@ -46,7 +52,7 @@ class JwtScanner:
                             "jwt:alg-none",
                             r,
                             label,
-                            tok[:24],
+                            tok,
                             "JWT alg=none — signature bypass",
                             group=ident,
                         )
@@ -58,8 +64,9 @@ class JwtScanner:
                             "jwt:hmac-alg",
                             r,
                             label,
-                            f"alg={alg}",
-                            "HMAC-signed JWT — test for weak/" "guessable signing key",
+                            tok,
+                            f"HMAC-signed JWT (alg={alg}) — test for weak/"
+                            "guessable signing key",
                             group=ident,
                         )
                     if len(parts) > 2 and parts[2] == "":
@@ -70,7 +77,7 @@ class JwtScanner:
                             "jwt:empty-signature",
                             r,
                             label,
-                            tok[:24],
+                            tok,
                             "JWT with empty signature segment",
                             group=ident,
                         )
@@ -82,8 +89,8 @@ class JwtScanner:
                             "jwt:no-expiry",
                             r,
                             label,
-                            "no exp claim",
-                            "JWT without expiry — token never " "expires",
+                            tok,
+                            "JWT without an exp claim — token never expires",
                             group=ident,
                         )
         return _dedupe(out)
