@@ -166,7 +166,7 @@ POSITIVE = {
             "executable-extension",
         ),
     ],
-    "headers": [
+    "security-headers": [
         (
             dict(
                 response_headers="Content-Type: text/html",
@@ -281,7 +281,7 @@ NEGATIVE = {
     "crlf": dict(query="q=hello"),
     "nosqli": dict(method="POST", body='{"user":"admin","age":30}'),
     "upload": dict(method="POST", body='filename="photo.jpg"'),
-    "headers": dict(
+    "security-headers": dict(
         is_tls=1,
         response_headers="Content-Type: text/html\n"
         "Content-Security-Policy: default-src 'self'\n"
@@ -324,8 +324,11 @@ def test_every_check_module_is_registered():
     unregistered module fails silently everywhere else, this test included.
     """
     package = pathlib.Path(cru.checks.__file__).parent
-    modules = {p.stem for p in package.glob("*.py")} - {"__init__", "base"}
-    assert modules == set(CHECKS)
+    # A module stem maps to its registry key with underscores as hyphens:
+    # `security_headers.py` has to be importable, `--check security-headers`
+    # has to read well.
+    modules = {p.stem.replace("_", "-") for p in package.glob("*.py")}
+    assert modules - {"--init--", "base"} == set(CHECKS)
     for key, cls in CHECKS.items():
         assert cls.name == key, f"{cls.__name__}.name is not its registry key"
 
@@ -772,6 +775,42 @@ def test_secrets_jwt_detector_dedupes_the_same_way(run_check):
     tokens = [f for f in run_check("secrets", rows) if f.signature == "jwt"]
     assert len(tokens) == 1
     assert tokens[0].paths == ["/a", "/b"]
+
+
+def test_code_sees_python_inside_a_json_string(run_check):
+    """Escaped newlines glue each line to the last, so \\b never fires.
+
+    `{"src": "...Operation\\ndef operation(a):..."}` reads as `ndef operation(`
+    in the raw field. The per-parameter view has the value unescaped, which is
+    where code in an API body actually shows.
+    """
+    body = json.dumps(
+        {"node": {"src": "# a comment\ndef operation(a, b):\n    return a"}}
+    )
+    rows = [dict(method="POST", body=body)]
+
+    findings = run_check("code", rows)
+
+    python = [f for f in findings if f.signature == "code:python (syntax)"]
+    assert python, "Python in a JSON string went unseen"
+    assert "def operation(" in python[0].evidence
+
+
+def test_code_does_not_read_markdown_backticks_as_a_shell_command(run_check):
+    """A word in backticks is prose; `cat /etc/passwd` is not."""
+    prose = json.dumps({"doc": "A function must be named `operation`."})
+    assert not [
+        f
+        for f in run_check("code", [dict(method="POST", body=prose)])
+        if f.signature == "code:shell (exec)"
+    ]
+
+    real = json.dumps({"x": "value=`cat /etc/passwd`"})
+    assert [
+        f
+        for f in run_check("code", [dict(method="POST", body=real)])
+        if f.signature == "code:shell (exec)"
+    ]
 
 
 def test_entropy_ignores_what_lives_inside_a_jwt(run_check):

@@ -8,7 +8,7 @@ from cru.checks.base import _dedupe, _emit, _header_map, _status
 
 
 class SecurityHeadersScanner:
-    name = "headers"
+    name = "security-headers"
 
     def run(self, rows):
         out = []

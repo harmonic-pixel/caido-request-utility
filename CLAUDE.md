@@ -76,8 +76,8 @@ in sync. There are currently **24**:
 
 ```
 deserialization secrets sqli ssti code srcleak xss xxe ssrf redirect
-traversal crlf nosqli upload headers cors cookies jwt infoleak fingerprint
-methods mixedcontent cleartext csrf
+traversal crlf nosqli upload security-headers cors cookies jwt infoleak
+fingerprint methods mixedcontent cleartext csrf
 ```
 
 ### Finding

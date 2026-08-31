@@ -94,7 +94,7 @@ payloads it displays.
 | `crlf` | CR/LF and overlong-UTF8 sequences in request inputs (request-side probe only) |
 | `nosqli` | MongoDB operators as JSON keys or bracketed parameters |
 | `upload` | Executable, double, and markup extensions in multipart filenames |
-| `headers` | Missing or weak CSP, HSTS, frame protection, nosniff, referrer/permissions policy |
+| `security-headers` | Missing or weak CSP, HSTS, frame protection, nosniff, referrer/permissions policy |
 | `cors` | Wildcard with credentials, `null` origin, credentialed origin reflection |
 | `cookies` | `Set-Cookie` missing HttpOnly, Secure, or SameSite |
 | `jwt` | `alg=none`, empty signatures, tokens with no expiry |

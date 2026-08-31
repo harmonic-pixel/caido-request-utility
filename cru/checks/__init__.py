@@ -15,7 +15,6 @@ from cru.checks.crlf import CrlfScanner
 from cru.checks.csrf import CsrfScanner
 from cru.checks.deserialization import DeserializationScanner
 from cru.checks.fingerprint import FingerprintScanner
-from cru.checks.headers import SecurityHeadersScanner
 from cru.checks.infoleak import InfoLeakScanner
 from cru.checks.jwt import JwtScanner
 from cru.checks.methods import MethodScanner
@@ -23,6 +22,7 @@ from cru.checks.mixedcontent import MixedContentScanner
 from cru.checks.nosqli import NoSqliScanner
 from cru.checks.redirect import OpenRedirectScanner
 from cru.checks.secrets import SecretScanner
+from cru.checks.security_headers import SecurityHeadersScanner
 from cru.checks.sqli import SqliScanner
 from cru.checks.srcleak import SourceLeakScanner
 from cru.checks.ssrf import SsrfScanner
@@ -47,7 +47,7 @@ CHECKS = {
     "crlf": CrlfScanner,
     "nosqli": NoSqliScanner,
     "upload": UploadScanner,
-    "headers": SecurityHeadersScanner,
+    "security-headers": SecurityHeadersScanner,
     "cors": CorsScanner,
     "cookies": CookieScanner,
     "jwt": JwtScanner,

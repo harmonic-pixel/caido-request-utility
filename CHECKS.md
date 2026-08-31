@@ -68,7 +68,7 @@ repeat them.
 - **Findings dedupe** on `(check, signature, host, path, location, evidence)`.
   The same finding across a thousand rows collapses to one, so a finding count
   is not a request count.
-- **Host-level findings** (`headers`, `cookies`, `fingerprint`, `methods`,
+- **Host-level findings** (`security-headers`, `cookies`, `fingerprint`, `methods`,
   `mixedcontent`) blank the path before dedup, so they report once per host
   rather than once per URL.
 
@@ -343,7 +343,7 @@ values in the response body.
   parameter is missed. A dangerous filename says nothing about where the file
   landed or whether it is servable.
 
-## `headers` — missing response security headers
+## `security-headers` — missing response security headers
 
 Host-level: findings blank the path so each host reports once.
 

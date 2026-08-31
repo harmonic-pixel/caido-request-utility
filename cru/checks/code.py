@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import re
 
-from cru.checks.base import Finding, _dedupe, _snippet, request_inputs
+from cru.checks.base import (
+    Finding,
+    _dedupe,
+    _snippet,
+    request_inputs,
+    request_param_values,
+)
 
 #
 # Reads request inputs and flags ones that look like they carry code — Python,
@@ -142,7 +148,15 @@ _CODE_SIGS = [
         "exec",
         "high",
         re.compile(
-            r"\$\([^)]{1,200}\)|`[^`]{1,200}`|/bin/(?:ba|z|)sh\b|"
+            r"\$\([^)]{1,200}\)|"
+            # Backtick substitution, but not a word in backticks: markdown-style
+            # inline code in a comment or a description is not a command, and
+            # `[^`]+` alone flagged prose. Take a command line (something with a
+            # space, path, pipe, redirect or flag in it) or a bare command name.
+            r"`[^`\n]{0,200}[\s/;|&$><-][^`\n]{0,200}`|"
+            r"`(?:cat|ls|id|pwd|whoami|uname|curl|wget|nc|ncat|ping|nslookup|"
+            r"chmod|rm|env|printenv|sh|bash|zsh)`|"
+            r"/bin/(?:ba|z|)sh\b|"
             r"\b(?:ba)?sh\s+-c\b|(?:^|[;&|])\s*(?:cat|ls|id|whoami|uname|curl|wget|"
             r"nc|ncat|ping|nslookup|chmod|rm)\s"
         ),
@@ -156,7 +170,13 @@ class CodeScanner:
     def run(self, rows):
         out = []
         for r in rows:
-            for label, text in request_inputs(r):
+            # Whole fields first, then each parameter on its own. Code inside a
+            # JSON string arrives with its newlines escaped, so every line runs
+            # into the previous one (`...Operation\ndef operation(`) and a
+            # \b-anchored pattern never fires on the raw field. The per-leaf
+            # view has the value unescaped, which is where code actually shows.
+            fields = list(request_inputs(r)) + list(request_param_values(r))
+            for label, text in fields:
                 for lang, tier, sev, rx in _CODE_SIGS:
                     m = rx.search(text)
                     if not m:
