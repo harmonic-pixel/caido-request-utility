@@ -26,7 +26,7 @@ Technically this is SQL agnostic, just override `cru.sql_util.execute` to use yo
 
 ## Passive scanning
 
-Once traffic is in the `requests` table, `cru.passive_scan` runs 24 pattern
+Once traffic is in the `requests` table, `cru.passive_scan` runs 23 pattern
 checks over it and reports what looks worth a closer look. It is **passive**: it
 reads the corpus and sends no traffic of its own, so every finding is a lead to
 confirm by hand against a system you are authorised to test.
@@ -60,9 +60,11 @@ uv run python -m cru.report_html corpus.db -o report.html        # JSON + self-c
 uv run python -m cru.idor_finder corpus.db                       # IDOR candidates (separate tool)
 ```
 
-A full report (`--check all`) also carries `idor_finder`'s candidates under the
-check name `idor`, so they filter, search and show their request like any other
-finding. The terminal scan does not — run `idor_finder` for those.
+A full run (`--check all`) also carries `idor_finder`'s candidates under the
+check name `idor`, in the terminal scan and in the report alike, so they filter,
+search and show their request like any other finding. `--check idor` runs that
+pass on its own and `--skip idor` leaves it out; the standalone tool is still
+there for its own output.
 
 `idor_finder` is deliberate about what it will *not* call an object
 reference: a JWT under any parameter name (a signed, expiring credential is not
@@ -122,7 +124,6 @@ payloads it displays.
 | `jwt` | `alg=none`, empty signatures, tokens with no expiry |
 | `infoleak` | Stack traces, debug pages, directory listings, GraphQL introspection |
 | `fingerprint` | Version banners and framework session-cookie names |
-| `methods` | `PUT`, `DELETE`, `TRACE`, `CONNECT`, `PATCH`, `TRACK` observed in traffic |
 | `mixedcontent` | `http://` sub-resources referenced from an HTTPS page |
 | `cleartext` | Credentials, cookies, or `Authorization` sent over plain HTTP |
 | `csrf` | State-changing cookie-authenticated requests with no visible CSRF token |
@@ -198,12 +199,6 @@ skipped and counted); `<response>`, `<host>`, `<port>`, `<protocol>`,
 - Broader test coverage
 - Tests against large sample data, on the order of 10k requests, to catch
   paging and memory behaviour the small fixtures cannot
-- Make `decoded_view` recursive: it unwraps one layer of base64 or hex, so a
-  base64-of-hex-of-payload is still invisible. Needs a depth cap, a progress and
-  printability gate, and a total-work cap to stay cheap
-- Run IDOR from `passive_scan` too. The report includes its candidates on a
-  full run and the terminal scan has none of them, so the same corpus gives
-  two different answers depending on which command you ran
 - Make the HTML report hold up on a large corpus — 100k requests, and the
   findings that come with them. The report is a single self-contained file
   that embeds the whole document as JSON, parses it on load and renders every

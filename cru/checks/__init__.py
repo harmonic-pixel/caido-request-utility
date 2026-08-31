@@ -17,7 +17,6 @@ from cru.checks.deserialization import DeserializationScanner
 from cru.checks.fingerprint import FingerprintScanner
 from cru.checks.infoleak import InfoLeakScanner
 from cru.checks.jwt import JwtScanner
-from cru.checks.methods import MethodScanner
 from cru.checks.mixedcontent import MixedContentScanner
 from cru.checks.nosqli import NoSqliScanner
 from cru.checks.redirect import OpenRedirectScanner
@@ -53,7 +52,6 @@ CHECKS = {
     "jwt": JwtScanner,
     "infoleak": InfoLeakScanner,
     "fingerprint": FingerprintScanner,
-    "methods": MethodScanner,
     "mixedcontent": MixedContentScanner,
     "cleartext": CleartextScanner,
     "csrf": CsrfScanner,

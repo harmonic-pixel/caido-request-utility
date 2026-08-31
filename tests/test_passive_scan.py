@@ -220,10 +220,6 @@ POSITIVE = {
     "fingerprint": [
         (dict(response_headers="Server: nginx/1.18.0"), "banner:server"),
     ],
-    "methods": [
-        (dict(method="DELETE", response_status_code=200), "method:DELETE"),
-        (dict(method="TRACE", response_status_code=200), "method:TRACE"),
-    ],
     "mixedcontent": [
         (
             dict(
@@ -298,7 +294,6 @@ NEGATIVE = {
     "jwt": dict(response_body='{"ok":true}'),
     "infoleak": dict(response_body="<html><body>Welcome</body></html>"),
     "fingerprint": dict(response_headers="Content-Type: text/html"),
-    "methods": dict(method="GET"),
     "mixedcontent": dict(
         is_tls=1,
         response_headers="Content-Type: text/html",
@@ -433,6 +428,66 @@ def test_decode_picks_the_alphabet_the_token_is_written_in():
     assert "/etc/passwd" in field_decode.decoded_view("v=" + token)
 
 
+def test_decoded_view_unwraps_a_payload_wrapped_twice():
+    """Wrapping twice is how you get past a decoder that unwraps once."""
+    payload = "<?php system(1); ?>"
+
+    b64_of_hex = b64(payload.encode().hex())
+    hex_of_b64 = b64(payload).encode().hex()
+
+    assert payload in field_decode.decoded_view("v=" + b64_of_hex)
+    assert payload in field_decode.decoded_view("v=" + hex_of_b64)
+
+
+def test_a_doubly_wrapped_payload_reaches_the_checks(run_check):
+    """The point of the decoding: a check sees it without decoding anything."""
+    row = dict(method="POST", body="d=" + b64(b64("<?php system(1); ?>")))
+
+    findings = run_check("code", [row])
+
+    assert "code" in checks_of(findings)
+    assert any("#decoded" in f.location for f in findings)
+
+
+def test_unwrapping_stops_at_the_depth_cap():
+    """Each layer is cheap; an unbounded chain of them is not."""
+    payload = "<?php system(1); ?>"
+    wrapped = payload
+    for _ in range(field_decode._MAX_DEPTH + 1):
+        wrapped = b64(wrapped)
+
+    view = field_decode.decoded_view("v=" + wrapped)
+
+    assert view.count("\n") == field_decode._MAX_DEPTH - 1, view[:120]
+    assert payload not in view, "the cap did not hold"
+    # One layer shallower and it comes out.
+    assert payload in field_decode.decoded_view("v=" + b64(payload))
+
+
+def test_the_same_plaintext_is_carried_once():
+    """The alphabets overlap, so one payload arrives by more than one route.
+
+    A hex run is valid base64 too, and a field repeats its tokens; without the
+    visited set every layer re-emits what the last one already produced.
+    """
+    payload = "<?php system(1); ?>"
+    token = b64(payload)
+
+    view = field_decode.decoded_view(f"a={token}&b={token}")
+
+    assert view.count(payload) == 1, view
+
+
+def test_unwrapping_is_bounded_by_a_budget(monkeypatch):
+    """A response can carry thousands of tokens; the field still has a ceiling."""
+    monkeypatch.setattr(field_decode, "_MAX_DECODES", 10)
+    field = " ".join(b64(f"value-number-{i}") for i in range(200))
+
+    view = field_decode.decoded_view(field)
+
+    assert 0 < view.count("value-number-") <= 10
+
+
 def test_decoded_view_expands_jwts_as_dot_joined_dicts():
     """A JWT reads as one opaque token; the decoded view spells it out."""
     token = _jwt({"sub": "42", "role": "admin"})
@@ -503,7 +558,7 @@ def test_secret_redaction_default_and_reveal(run_check):
 def test_all_runner_covers_registered_checks():
     checks = ps.build_checks("all")
     assert sorted(c.name for c in checks) == ALL_CHECKS
-    assert len(ALL_CHECKS) == 24
+    assert len(ALL_CHECKS) == 23
 
 
 @pytest.mark.parametrize(
@@ -1562,6 +1617,67 @@ def test_skip_leaves_the_named_checks_out_of_the_run():
     assert set(names) == set(ALL_CHECKS) - {"secrets", "cors"}
     # Skipping something a single --check did not select changes nothing.
     assert [c.name for c in ps.build_checks("sqli", skip=("secrets",))] == ["sqli"]
+
+
+def _idor_db(tmp_path, make_db):
+    con = make_db(
+        [
+            dict(path=f"/users/{i}", headers="Authorization: Bearer abc")
+            for i in range(1, 4)
+        ]
+    )
+    db = tmp_path / "idor.db"
+    disk = sqlite3.connect(str(db))
+    con.backup(disk)
+    disk.close()
+    return db
+
+
+def test_the_terminal_scan_reports_idor_candidates(tmp_path, make_db, capsys):
+    """The report folded IDOR in and the scan did not, so the same corpus gave
+    two different answers depending on which command you ran.
+    """
+    db = _idor_db(tmp_path, make_db)
+
+    ps.main([str(db), "--no-progress"])
+
+    out = capsys.readouterr().out
+    assert "== idor :" in out
+    assert "/users/{int}" in out, "the endpoint template is the finding's path"
+
+
+def test_idor_can_be_skipped_or_asked_for_on_its_own(tmp_path, make_db, capsys):
+    """It selects like a check even though it is not one."""
+    db = _idor_db(tmp_path, make_db)
+
+    ps.main([str(db), "--skip", "idor", "--no-progress"])
+    assert "idor" not in capsys.readouterr().out
+
+    ps.main([str(db), "--check", "idor", "--no-progress"])
+    only = capsys.readouterr().out
+    assert "== idor :" in only
+    assert only.count("== ") == 1, "a single --check is just that check"
+    assert ps.build_checks("idor") == [], "idor names no registered check"
+
+
+def test_the_scan_and_the_report_agree_about_idor(tmp_path, make_db):
+    """Same corpus, same candidates, whichever command produced them."""
+    from cru import report_html
+
+    db = _idor_db(tmp_path, make_db)
+
+    rows = ps.load_rows(str(db))
+    scanned = ps.idor_findings(str(db), "requests")
+    _rows, reported, _messages = report_html.collect(str(db), "requests", "all", False)
+
+    assert scanned, "no candidates to compare"
+    assert [f.signature for f in scanned] == [
+        f.signature for f in reported if f.check == "idor"
+    ]
+    assert not any(
+        c.name == "idor" for c in ps.build_checks("all")
+    ), "idor is a separate aggregation, not a registered check"
+    assert rows, "the corpus still loads for the checks themselves"
 
 
 def test_present_redacts_the_secrets_check_and_nothing_else(run_check):

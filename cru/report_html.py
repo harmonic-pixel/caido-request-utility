@@ -45,7 +45,6 @@ import argparse
 import datetime as _dt
 import inspect
 import json
-import sqlite3
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -54,7 +53,6 @@ from cru import idor_finder as idor
 from cru import passive_scan as ps
 from cru import progress
 from cru.checks import CHECKS
-from cru.checks.base import Finding
 from cru.checks.secrets import secret_literals
 
 TOOL_VERSION = "1.0"
@@ -84,47 +82,6 @@ def _rule_urls(repo_url):
     return urls
 
 
-def idor_findings(db, table):
-    """IDOR candidates as findings, so they filter and read like everything else.
-
-    `idor_finder` aggregates its own way and needs `response_length`, which the
-    scanner's loader does not select — hence its own read of the table. The
-    evidence is one observed ID rather than the whole sample, so the report can
-    point at it in the request; the rest are listed in the dropdown.
-    """
-    try:
-        rows = idor.load_rows(db, table)
-    except sqlite3.OperationalError:
-        # A database built before `response_length` existed: the scan findings
-        # are still worth a report, so skip the IDOR pass rather than fail.
-        return []
-    out = []
-    for c in idor.analyse(rows):
-        label = idor.TYPE_LABEL.get(c.id_type, c.id_type)
-        if c.confidence != "primary":
-            label += " (low confidence)"
-        auth = "no"
-        if c.auth_observed:
-            auth = "mixed" if c.unauth_observed else "yes"
-        out.append(
-            Finding(
-                "idor",
-                "review",
-                label,
-                c.host,
-                c.method,
-                c.endpoint,
-                c.location,
-                c.sample_ids[0] if c.sample_ids else "",
-                f"{c.note} — {c.distinct_ids} distinct; "
-                f"responses {c.statuses or '—'}; auth: {auth}; "
-                f"requests: {c.request_count}",
-                ids=c.sample_ids,
-            )
-        )
-    return out
-
-
 def collect(db, table, check, show_secrets, skip=()):
     rows = ps.load_rows(db, table)
     checks = ps.build_checks(check, skip=skip)
@@ -134,9 +91,9 @@ def collect(db, table, check, show_secrets, skip=()):
         findings.extend(c.run(rows))
     # IDOR is a separate tool with its own aggregation, not a registered check,
     # so it rides along only on a full run.
-    if check == "all" and "idor" not in skip:
+    if check in ("all", "idor") and "idor" not in skip:
         progress.track(len(checks), len(checks) + 2, "scanning (idor)")
-        findings.extend(idor_findings(db, table))
+        findings.extend(ps.idor_findings(db, table))
     findings.sort(key=lambda f: (f.host, f.check, f.path))
     progress.track(len(checks) + 1, len(checks) + 2, "locating evidence")
     # Locating runs while the findings still carry their raw evidence, against
@@ -837,7 +794,7 @@ def main(argv=None):
         help="render HTML from an existing report JSON, no rescan",
     )
     ap.add_argument("--table", default="requests")
-    ap.add_argument("--check", choices=("all", *CHECKS), default="all")
+    ap.add_argument("--check", choices=("all", *CHECKS, "idor"), default="all")
     ap.add_argument(
         "--skip",
         nargs="+",

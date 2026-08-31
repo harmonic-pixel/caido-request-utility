@@ -29,7 +29,7 @@ Burp XML export ──(cru.burp_to_sql)──┘
 | `cru/burp_to_sql.py` | Import a Burp "Save items" XML export into the same schema. |
 | `cru/field_decode.py` | Shared base64/hex decoder. The importers call it at load time. |
 | `cru/report_html.py` | Build the verbose JSON report + a self-contained HTML view from it, including the reconstructed request/response each finding is highlighted in, and a link from each rule to the check's source (`REPO_URL`, `--repo-url`). |
-| `cru/idor_finder.py` | Standalone IDOR-candidate finder (separate tool, own aggregation). `report_html` folds its candidates in as `check="idor"` on a full run. Its precision comes from what it refuses — see its module docstring before loosening any of it. |
+| `cru/idor_finder.py` | Standalone IDOR-candidate finder (separate tool, own aggregation). `passive_scan.idor_findings` folds its candidates in as `check="idor"` on a full run, for the terminal scan and the report alike. Its precision comes from what it refuses — see its module docstring before loosening any of it. |
 | `cru/__main__.py` | `python -m cru <source>` — import, scan and report in one command. Thin: it calls the others. |
 | `cru/sql_util.py` | The DB seam: `execute` and `execute_many`. Override to target another DB. |
 | `cru/progress.py` | One-line progress for the slow phases. Stderr, and only when a terminal is attached. |
@@ -74,12 +74,12 @@ its own module under `cru/checks/`, holding the class and the pattern tables onl
 it uses; shared primitives are in `cru/checks/base.py`. Registration is one entry
 in the `CHECKS` dict in `cru/checks/__init__.py` — `build_checks()` and the
 `--check` and `--skip` CLI choices are all derived from it, so there is nothing
-else to keep in sync. There are currently **24**:
+else to keep in sync. There are currently **23**:
 
 ```
 deserialization secrets sqli ssti code srcleak xss xxe ssrf redirect
 traversal crlf nosqli upload security-headers cors cookies jwt infoleak
-fingerprint methods mixedcontent cleartext csrf
+fingerprint mixedcontent cleartext csrf
 ```
 
 ### Finding
@@ -167,8 +167,7 @@ JWTs get one extra pass (`field_decode._jwt_views`). A token is base64 all the
 way down but reads as one opaque blob, and one wrapped inside another base64
 field survives the single decode layer intact — so the pass runs over the field
 *and* over what it just decoded, appending each token rewritten as
-`{header}.{claims}.{signature}` with the two dictionaries as JSON. That is a
-narrow, bounded case of the recursion below, not a substitute for it.
+`{header}.{claims}.{signature}` with the two dictionaries as JSON.
 
 **A DB imported before a `field_decode` change keeps the old decoded columns** —
 the decoding happened at import. Re-import to pick a change up.
@@ -186,11 +185,12 @@ candidates in and one junk decode out the other side. **Hex keeps the
 16-character floor**: eight hex digits is four bytes, too few to judge, and a
 minified bundle is full of them.
 
-> Still open on `field_decode`, and on the README roadmap: **make `decoded_view`
-> recursive** (base64-of-hex-of-payload) with a depth cap (~3–4), a progress +
-> printability gate, a visited-set and total-work cap, and base64/hex branch
-> dedup (the alphabets overlap, so recursion can branch). It currently unwraps
-> one layer, plus the JWT pass described above. Add tests alongside.
+**Unwrapping repeats.** `_iter_decoded` scans what each token decoded to, breadth
+first, so base64-of-hex-of-payload comes out as plaintext. It is bounded by
+`_MAX_DEPTH` layers and `_MAX_DECODES` attempts per field, and by the set of
+plaintexts already seen — the alphabets overlap (a hex run is valid base64
+too), so both branches can reach the same bytes. No cycle is possible: every
+layer is smaller than the token it came out of.
 
 ### Correlation
 Some checks raise confidence by correlating request and response in the same row.

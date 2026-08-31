@@ -13,6 +13,11 @@ concatenate rather than keep per-token views because the checks only need the
 plaintext to be *present* somewhere scannable; storing one string per field
 keeps the schema simple and the scan fast.
 
+Unwrapping repeats: what a token decodes to is scanned again, so base64 of hex
+of the payload comes out as plaintext rather than as one more opaque blob. It
+is bounded by a depth cap, a cap on decode attempts per field, and the set of
+plaintexts already seen — see `_iter_decoded`.
+
 JWTs get one extra step. A token is base64 all the way down, but it reads as a
 single opaque blob to the passes below — and when it arrives wrapped inside
 another base64 field it survives the one decode layer intact. So the decoded
@@ -54,6 +59,10 @@ JWT_RE = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-
 JWT_DECODED_RE = re.compile(r'\{"alg":.*\}\.[A-Za-z0-9_-]*')
 # Bound the work per field: a response can carry a great many tokens.
 _MAX_JWTS = 64
+# How many layers of wrapping to unwrap (base64 of hex of the payload is two),
+# and how many decode attempts one field is worth in total.
+_MAX_DEPTH = 4
+_MAX_DECODES = 20_000
 
 
 def _b64_decode(tok: str):
@@ -115,38 +124,71 @@ def _decoded_text(raw: bytes) -> str | None:
     return text
 
 
-def _iter_decoded(text: str):
-    """Yield decoded plaintext strings for base64/hex tokens that look real."""
-    if not text:
-        return
-    seen = {text}
-
+def _decode_layer(text: str, budget: list[int]):
+    """Yield the plaintext of every base64/hex token in one pass over `text`."""
     for m in _B64_RE.finditer(text):
+        if budget[0] <= 0:
+            return
+        budget[0] -= 1
         dec = _decoded_text(_b64_decode(m.group(0)) or b"")
-        if dec and dec not in seen:
-            seen.add(dec)
+        if dec:
             yield dec
 
     for m in _HEX_PCT_RE.finditer(text):
+        if budget[0] <= 0:
+            return
+        budget[0] -= 1
         raw = bytes(int(h, 16) for h in re.findall(r"%([0-9A-Fa-f]{2})", m.group(0)))
         dec = _decoded_text(raw)
-        if dec and dec not in seen:
-            seen.add(dec)
+        if dec:
             yield dec
 
     for m in _HEX_RUN_RE.finditer(text):
+        if budget[0] <= 0:
+            return
         tok = m.group(0)
         h = tok[2:] if tok.lower().startswith("0x") else tok
         if len(h) % 2:
             continue
+        budget[0] -= 1
         try:
             raw = bytes.fromhex(h)
         except ValueError:
             continue
         dec = _decoded_text(raw)
-        if dec and dec not in seen:
+        if dec:
+            yield dec
+
+
+def _iter_decoded(text: str):
+    """Yield decoded plaintext for the tokens in `text`, layer after layer.
+
+    Wrapping twice is a way to get past a scanner that only unwraps once —
+    base64 of hex of the payload reads as one opaque token either way — so each
+    layer's plaintext is scanned again, breadth first, down to `_MAX_DEPTH`.
+
+    What keeps that cheap: every layer is smaller than the token it came out
+    of, so there is no cycle to fall into; `seen` drops a plaintext reached
+    twice, which the overlapping alphabets make likely (a hex run is valid
+    base64 too, so both branches can arrive at the same bytes); and `budget`
+    caps the decode attempts for the whole field, however many tokens a
+    response turns out to carry.
+    """
+    if not text:
+        return
+    seen = {text}
+    queue = [(text, 0)]
+    budget = [_MAX_DECODES]
+
+    while queue and budget[0] > 0:
+        src, depth = queue.pop(0)
+        for dec in _decode_layer(src, budget):
+            if dec in seen:
+                continue
             seen.add(dec)
             yield dec
+            if depth + 1 < _MAX_DEPTH:
+                queue.append((dec, depth + 1))
 
 
 def _jwt_view(token: str) -> str | None:

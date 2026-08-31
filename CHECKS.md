@@ -64,8 +64,10 @@ floor: four bytes is too little to judge, and a minified bundle is full of them.
 
 Two limits worth knowing:
 
-- **One layer only.** `decoded_view` unwraps base64 *or* hex, not
-  base64-of-hex-of-payload. A doubly-wrapped payload is invisible.
+- **Four layers, then it stops.** What a token decodes to is scanned again, so
+  base64-of-hex-of-payload comes out as plaintext, but a chain deeper than
+  `_MAX_DEPTH` does not — and a field carrying more tokens than `_MAX_DECODES`
+  stops being unwrapped where the budget runs out.
 - **A database without the columns loses it silently.** If the `*_decoded`
   columns are absent, `load_rows` falls back to the base columns and no
   `#decoded` views are produced — no error, just less coverage. Both CRU import
@@ -89,7 +91,7 @@ repeat them.
 - **Findings dedupe** on `(check, signature, host, path, location, evidence)`.
   The same finding across a thousand rows collapses to one, so a finding count
   is not a request count.
-- **Host-level findings** (`security-headers`, `cookies`, `fingerprint`, `methods`,
+- **Host-level findings** (`security-headers`, `cookies`, `fingerprint`,
   `mixedcontent`) blank the path before dedup, so they report once per host
   rather than once per URL.
 
@@ -493,19 +495,6 @@ Host-level.
   `laravel_session`, `connect.sid`, `csrftoken`, …).
 - **Limits:** disclosure only. Whether the disclosed version is actually
   vulnerable is not checked, and banners are trivially spoofed.
-
-## `methods` — dangerous HTTP methods observed
-
-Host-level.
-
-- **Reads:** the request method and response status.
-- **Signatures:** `PUT`, `DELETE`, `TRACE`, `CONNECT`, `PATCH`, `TRACK`.
-  `TRACE`/`TRACK` are noted as a Cross-Site Tracing risk; any of them answered
-  with a status below 405 is noted as "method allowed".
-- **Limits:** this reports methods that appear *in the corpus*, i.e. methods
-  something already sent. It does not enumerate what a server would accept —
-  that needs an active `OPTIONS` probe. A status under 405 is not proof the
-  operation succeeded.
 
 ## `mixedcontent` — HTTP resources on an HTTPS page
 
