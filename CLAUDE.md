@@ -73,9 +73,9 @@ in the `CHECKS` dict in `cru/checks/__init__.py` — `build_checks()` and the
 in sync. There are currently **24**:
 
 ```
-deser secrets sqli ssti code srcleak xss xxe ssrf redirect traversal crlf
-nosqli upload headers cors cookies jwt infoleak fingerprint methods
-mixedcontent cleartext csrf
+deserialization secrets sqli ssti code srcleak xss xxe ssrf redirect
+traversal crlf nosqli upload headers cors cookies jwt infoleak fingerprint
+methods mixedcontent cleartext csrf
 ```
 
 ### Finding

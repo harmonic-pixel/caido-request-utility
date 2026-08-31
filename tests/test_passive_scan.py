@@ -48,7 +48,7 @@ def b64(s):
 
 
 POSITIVE = {
-    "deser": [
+    "deserialization": [
         (
             dict(
                 method="POST",
@@ -258,7 +258,7 @@ POSITIVE = {
 NEGATIVE = {
     # The avatar URL is deliberate: its base64-ish segment decodes to bytes that
     # happen to contain \x80\x04, which used to read as a pickle PROTO opcode.
-    "deser": dict(
+    "deserialization": dict(
         method="POST",
         body="name=John&city=Wellington",
         response_body='{"picture":"https://lh3.googleusercontent.com/a/'

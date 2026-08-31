@@ -132,7 +132,7 @@ def _looks_pickle(raw: bytes) -> bool:
 
 
 class DeserializationScanner:
-    name = "deser"
+    name = "deserialization"
 
     def run(self, rows):
         out = []

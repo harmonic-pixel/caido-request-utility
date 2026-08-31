@@ -13,7 +13,7 @@ from cru.checks.cookies import CookieScanner
 from cru.checks.cors import CorsScanner
 from cru.checks.crlf import CrlfScanner
 from cru.checks.csrf import CsrfScanner
-from cru.checks.deser import DeserializationScanner
+from cru.checks.deserialization import DeserializationScanner
 from cru.checks.fingerprint import FingerprintScanner
 from cru.checks.headers import SecurityHeadersScanner
 from cru.checks.infoleak import InfoLeakScanner
@@ -33,7 +33,7 @@ from cru.checks.xss import XssScanner
 from cru.checks.xxe import XxeScanner
 
 CHECKS = {
-    "deser": DeserializationScanner,
+    "deserialization": DeserializationScanner,
     "secrets": SecretScanner,
     "sqli": SqliScanner,
     "ssti": SstiScanner,

@@ -63,7 +63,7 @@ payloads it displays.
 
 | Check | Catches |
 |-------|---------|
-| `deser` | Serialized objects and gadget markers — PHP, Java, .NET, Ruby, pickle, YAML tags |
+| `deserialization` | Serialized objects and gadget markers — PHP, Java, .NET, Ruby, pickle, YAML tags |
 | `secrets` | Vendor API keys and tokens, private keys, plus a high-entropy sweep |
 | `sqli` | DBMS errors in responses, SQLi-shaped payloads, and parameter names like `sqlQuery` or `orderBy` that compose the query |
 | `ssti` | Template-expression syntax in request inputs, tagged by templating style |

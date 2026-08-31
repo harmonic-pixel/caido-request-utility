@@ -74,7 +74,7 @@ repeat them.
 
 ---
 
-## `deser` — deserialization / serialized-object payloads
+## `deserialization` — serialized-object payloads
 
 Serialized objects crossing a trust boundary are a direct path to RCE when the
 receiving side calls an unsafe `unserialize()` / `readObject()` / `loads()`.
