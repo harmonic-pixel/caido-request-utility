@@ -36,6 +36,7 @@ import sqlite3
 import xml.etree.ElementTree as ET
 import zlib
 
+import cru.progress
 import cru.schema
 
 try:
@@ -298,7 +299,11 @@ def import_burp(xml_path, db_path, replace=False, batch=1000):
     cru.schema.create_requests_table(con)
 
     total, skipped, buf = 0, 0, []
-    for item in iter_items(xml_path):
+    for i, item in enumerate(iter_items(xml_path), 1):
+        # The export's item count is not known until it has been read, so this
+        # phase counts rather than filling a bar — as the CSV import does.
+        if i % 100 == 0:
+            cru.progress.count(i, "reading export")
         row = row_from_item(item)
         if row is None:
             skipped += 1
@@ -311,6 +316,7 @@ def import_burp(xml_path, db_path, replace=False, batch=1000):
     if buf:
         cru.schema.insert_rows(con, buf)
         total += len(buf)
+    cru.progress.clear()
     con.close()
     return total, skipped
 
@@ -328,7 +334,12 @@ def main(argv=None):
     ap.add_argument(
         "--replace", action="store_true", help="drop an existing requests table first"
     )
+    ap.add_argument(
+        "--no-progress", action="store_true", help="do not draw the progress bar"
+    )
     args = ap.parse_args(argv)
+    if args.no_progress:
+        cru.progress.disable()
 
     total, skipped = import_burp(args.xml, args.out, replace=args.replace)
     msg = f"Imported {total} requests into {args.out} [xml: {_XML_BACKEND}]"
