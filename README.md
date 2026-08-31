@@ -45,6 +45,11 @@ python -m cru.report_html corpus.db -o report.html       # JSON + self-contained
 python -m cru.idor_finder corpus.db                      # IDOR candidates (separate tool)
 ```
 
+The decoded view spells JWTs out rather than leaving them as opaque tokens:
+each one appears as `{"alg": "HS256", ...}.{"sub": "42", ...}.<signature>`, so
+the claims are readable in the report's `#decoded` tab and scannable by every
+check. Tokens wrapped inside another base64 field are expanded too.
+
 Findings are grouped by check and are not ranked by severity. Expanding one
 shows the request it came out of — reconstructed from the stored fields, with
 the matched string highlighted — and tabs for the response and for any decoded
@@ -143,7 +148,8 @@ skipped and counted); `<response>`, `<host>`, `<port>`, `<protocol>`,
 - The export carries no timestamps, so `created_at` and `response_created_at`
   are written as `0`.
 - The `*_decoded` columns are filled at import time, so a Burp-imported database
-  has encoding coverage from the start.
+  has encoding coverage from the start. That also means a database imported
+  before a decoding change keeps the old columns — re-import to pick one up.
 
 ## Idea Roadmap
 

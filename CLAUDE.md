@@ -128,6 +128,16 @@ surface these as extra `#decoded` views (e.g. `request-body#decoded`), so checks
 get encoding coverage for free — **checks must not decode inline**. `load_rows`
 selects the decoded columns and falls back gracefully for a DB built without them.
 
+JWTs get one extra pass (`field_decode._jwt_views`). A token is base64 all the
+way down but reads as one opaque blob, and one wrapped inside another base64
+field survives the single decode layer intact — so the pass runs over the field
+*and* over what it just decoded, appending each token rewritten as
+`{header}.{claims}.{signature}` with the two dictionaries as JSON. That is a
+narrow, bounded case of the recursion below, not a substitute for it.
+
+**A DB imported before a `field_decode` change keeps the old decoded columns** —
+the decoding happened at import. Re-import to pick a change up.
+
 > Two open work items on `field_decode`, best done together — both are about
 > deciding "is this really encoded?" from the decoded bytes rather than from the
 > token's shape, and both need the same guardrails to stay cheap:
@@ -139,7 +149,7 @@ selects the decoded columns and falls back gracefully for a DB built without the
 > 2. **Make `decoded_view` recursive** (base64-of-hex-of-payload) with a depth cap
 >    (~3–4), a progress + printability gate, a visited-set and total-work cap, and
 >    base64/hex branch dedup (the alphabets overlap, so recursion can branch). It
->    currently unwraps one layer.
+>    currently unwraps one layer, plus the JWT pass described above.
 >
 > Add tests alongside. Both are on the README roadmap.
 

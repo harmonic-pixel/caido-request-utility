@@ -14,6 +14,7 @@ finding for that check) and a NEGATIVE case (a benign row that must not). Cases
 are declared as data so the matrix is easy to read and extend.
 """
 
+import json
 import pathlib
 import sqlite3
 
@@ -398,6 +399,45 @@ def test_decoded_view_helper():
         "".join(f"%{b:02x}" for b in b"/etc/passwd")
     )
     assert field_decode.decoded_view("just plain text") == ""
+
+
+def test_decoded_view_expands_jwts_as_dot_joined_dicts():
+    """A JWT reads as one opaque token; the decoded view spells it out."""
+    token = _jwt({"sub": "42", "role": "admin"})
+
+    view = field_decode.decoded_view(f"Authorization: Bearer {token}")
+
+    # The base64 pass already decodes each segment on its own; the line wanted
+    # here is the whole token rewritten, dots and all.
+    expanded = next(
+        line for line in view.split("\n") if line.startswith("{") and "}." in line
+    )
+    header, claims, signature = expanded.split(".")
+    assert json.loads(header)["alg"] == "HS256"
+    assert json.loads(claims) == {"sub": "42", "role": "admin"}
+    assert signature == token.split(".")[2]
+
+
+def test_decoded_view_expands_a_jwt_wrapped_in_another_layer():
+    """The case the report showed: a token inside a base64 field.
+
+    One decode layer unwraps the field and leaves the JWT intact, so without a
+    pass over what was just decoded the claims never become readable.
+    """
+    token = _jwt({"sub": "42"})
+    wrapped = _b64.b64encode(f"Authorization: Bearer {token}".encode()).decode()
+
+    view = field_decode.decoded_view(f"X-Session: {wrapped}")
+
+    assert '"sub": "42"' in view
+
+
+def test_decoded_view_leaves_a_jwt_lookalike_alone():
+    """Two base64url-looking segments and a dot are not a JWT."""
+    assert (
+        field_decode._jwt_view("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.nope-not-json.sig")
+        is None
+    )
     assert field_decode.decoded_view(None) == ""
 
 
