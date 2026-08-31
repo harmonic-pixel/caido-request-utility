@@ -1055,6 +1055,33 @@ def test_entropy_still_reports_a_secret_beside_a_jwt(run_check):
     )
 
 
+def test_a_jwt_in_a_basic_credential_is_one_finding(run_check):
+    """This app sends its JWT as the Basic username.
+
+    That is one credential in two encodings, so it is one secrets finding —
+    reported as the header, which says what is inside it. Reporting the token
+    separately looked like a mislabel: the request on screen says
+    `Authorization: Basic`, with nothing to connect the two.
+    """
+    token = _jwt({"sub": "42"})
+    header = "Authorization: Basic " + _b64.b64encode(f"{token}:".encode()).decode()
+    rows = [dict(headers=header)]
+
+    findings = run_check("secrets", rows)
+
+    basic = [f for f in findings if f.signature == "basic-auth-header"]
+    assert len(basic) == 1
+    assert "JWT used as the username" in basic[0].detail
+    assert not [f for f in findings if f.signature == "jwt"], "reported twice"
+
+
+def test_a_jwt_on_its_own_is_still_a_secrets_finding(run_check):
+    """The fold-in is for the Basic case only."""
+    rows = [dict(method="POST", body=f"token={_jwt({'sub': '42'})}")]
+
+    assert [f.signature for f in run_check("secrets", rows) if f.signature == "jwt"]
+
+
 def test_one_secret_is_one_finding_however_many_requests(run_check):
     """A credential sprayed across a session is one thing to rotate."""
     rows = [

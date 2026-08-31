@@ -126,6 +126,12 @@ tokens no detector knows about.
   Mailgun, PEM private-key blocks, JWTs, `Authorization: Basic`, and a generic
   `password=`/`api_key=`-style assignment. The entropy pass flags base64-ish
   tokens of length ≥ 20 scoring ≥ 4.5 bits, or hex tokens scoring ≥ 3.0.
+- **`Authorization: Basic` carrying a JWT:** some apps put the token in the
+  username, so the header and the token are one credential in two encodings.
+  It is reported once, as `basic-auth-header`, whose detail says what is inside
+  it; the separate `jwt` hit on the decoded view is suppressed. Reporting both
+  read as a mislabel — the request on screen says `Authorization: Basic`, with
+  nothing connecting it to a JWT finding.
 - **Dedup:** one finding per secret, not per request it turned up in — a
   credential sprayed across a browsing session is one thing to rotate, and the
   requests are listed on the finding. The `jwt` detector groups on decoded

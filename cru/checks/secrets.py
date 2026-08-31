@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 
 from cru.checks.base import (
@@ -101,6 +103,17 @@ _ENTROPY_SKIP = re.compile(
 )  # UUID prefix
 
 
+def _basic_credential(hit):
+    """What an `Authorization: Basic` credential decodes to, or ""."""
+    token = hit.rsplit(None, 1)[-1]
+    try:
+        return base64.b64decode(token + "=" * (-len(token) % 4)).decode(
+            "utf-8", "replace"
+        )
+    except (ValueError, binascii.Error):
+        return ""
+
+
 def _side(label):
     """Which half of the exchange a field belongs to.
 
@@ -120,18 +133,34 @@ class SecretScanner:
     def run(self, rows):
         out = []
         for r in rows:
+            # What a Basic credential on this request decodes to. Some apps put
+            # a JWT in the username, and then the token and the header are one
+            # credential wearing two encodings — worth saying once, not twice.
+            basic = []
             for label, text in iter_fields(r):
                 # 1) high-precision detectors
                 claimed = []
                 for name, rx, sev in _SECRET_DETECTORS:
                     for m in rx.finditer(text):
                         hit = m.group(1) if (m.groups() and m.group(1)) else m.group(0)
+                        if name == "jwt" and any(hit in b for b in basic):
+                            continue  # already reported as the Basic credential
                         # This text now has a name. The entropy sweep exists
                         # for the *unlabelled*, so it must not report the same
                         # bytes again — the credential in an Authorization:
                         # Basic header is high-entropy by nature, and it is
                         # already a basic-auth-header finding.
                         claimed.append(m.span())
+                        detail = "matched detector pattern"
+                        if name == "basic-auth-header":
+                            credential = _basic_credential(m.group(0))
+                            if JWT_RE.search(credential):
+                                basic.append(credential)
+                                detail = (
+                                    "Basic credential is a JWT used as the "
+                                    "username — one credential, and the token "
+                                    "travels in a header that gets logged"
+                                )
                         # One finding per secret, not per request it appeared
                         # in: a credential sprayed across a browsing session is
                         # one thing to rotate, and the requests are listed on
@@ -151,7 +180,7 @@ class SecretScanner:
                                 r["path"],
                                 label,
                                 hit.strip(),
-                                "matched detector pattern",
+                                detail,
                                 group=group,
                             )
                         )
