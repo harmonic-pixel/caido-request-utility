@@ -65,8 +65,9 @@ finding. The terminal scan does not — run `idor_finder` for those.
 `idor_finder` is deliberate about what it will *not* call an object
 reference: a JWT under any parameter name (a signed, expiring credential is not
 enumerable — that is the `jwt` check's business), a bare integer on a parameter
-named for a quantity or a position (`offset`, `per_page`, `x`, `_key`), and a
-bare integer on an unnamed parameter seen only once. A short list you can act on
+named for a quantity or a position (`offset`, `per_page`, `x`, `_key`), and any
+candidate seen with a single distinct ID — with nothing to enumerate and nothing
+to compare, that is not a lead (`--min-distinct 1` puts them back). A short list you can act on
 beats a long one you have to sift.
 
 In the report, an IDOR candidate lists every ID it was observed with in its own

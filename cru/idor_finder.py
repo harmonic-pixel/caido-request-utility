@@ -17,8 +17,10 @@ What it does:
          `secrets` check have it covered;
        * a bare integer on a parameter plainly named for a quantity or a
          position (`offset`, `per_page`, `x`, `_key`, `min_count`, ...);
-       * a bare integer on an unnamed parameter seen only once, since a single
-         value is no evidence the endpoint enumerates.
+       * anything seen with only one distinct ID, whatever shape it is: there
+         is nothing to enumerate and nothing to compare, so it tells you only
+         that the endpoint takes an identifier — which its shape already said.
+         `--min-distinct 1` puts those back.
   3. Normalises each path into an endpoint *template* so the same route with
      different IDs collapses together (that clustering is the whole point:
      "we saw /api/users/{int} hit with 40 distinct IDs" is a strong signal).
@@ -158,8 +160,11 @@ TYPE_LABEL = {
 }
 # Kept per candidate. The text renderer shows the first few; the HTML report
 # lists them all, which is what you actually enumerate against.
-# Distinct values a review-tier candidate needs before it is worth reporting.
-_REVIEW_MIN_DISTINCT = 2
+# Distinct values a candidate needs before it is worth reporting. One observed
+# ID is not a lead: there is nothing to enumerate and nothing to compare, so it
+# tells you only that the endpoint takes an identifier — which its shape already
+# said. `--min-distinct 1` puts them back.
+MIN_DISTINCT = 2
 
 _ID_SAMPLE = 100
 _TEXT_SAMPLE = 5
@@ -442,7 +447,7 @@ class _Agg:
     confidence: str = "primary"
 
 
-def analyse(rows) -> list[Finding]:
+def analyse(rows, min_distinct: int = MIN_DISTINCT) -> list[Finding]:
     groups: dict[tuple, _Agg] = defaultdict(_Agg)
 
     for r in rows:
@@ -488,11 +493,7 @@ def analyse(rows) -> list[Finding]:
     findings: list[Finding] = []
     for (host, method, template, location, id_type), g in groups.items():
         statuses = sorted(g.statuses)
-        # A bare int on an unnamed parameter is a guess. Seen once it is not
-        # even that: one value is no evidence the endpoint enumerates, and a
-        # lone `600` or `1` was most of what this tier used to report. A named
-        # or high-entropy reference still stands on a single sighting.
-        if g.confidence == "review" and len(g.values) < _REVIEW_MIN_DISTINCT:
+        if len(g.values) < min_distinct:
             continue
 
         any_2xx = any(200 <= s < 300 for s in statuses)
@@ -666,8 +667,11 @@ def main(argv=None):
     ap.add_argument(
         "--min-distinct",
         type=int,
-        default=1,
-        help="only show candidates with >= N distinct observed IDs",
+        default=MIN_DISTINCT,
+        help=(
+            "only show candidates with >= N distinct observed IDs "
+            f"(default: {MIN_DISTINCT}; 1 includes single-sighting endpoints)"
+        ),
     )
     ap.add_argument("--min-severity", choices=("low", "medium", "high"), default="low")
     ap.add_argument(
@@ -678,7 +682,7 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     rows = load_rows(args.db, args.table)
-    findings = analyse(rows)
+    findings = analyse(rows, min_distinct=args.min_distinct)
 
     floor = _SEV_ORDER[args.min_severity]
     findings = [

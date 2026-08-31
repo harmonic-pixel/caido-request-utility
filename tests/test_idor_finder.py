@@ -74,18 +74,23 @@ def _rows(values, key="thing"):
     ]
 
 
-def test_a_single_sighting_is_not_evidence_of_enumeration():
-    """One value says nothing about whether the endpoint enumerates."""
+def test_a_single_sighting_is_not_worth_testing():
+    """One observed ID is not a lead, whatever shape it is.
+
+    There is nothing to enumerate and nothing to compare — it says only that
+    the endpoint takes an identifier, which its shape already said.
+    """
     assert idor.analyse(_rows([4021])) == []
+    assert idor.analyse(_rows(["6a951f7f1af62e63c9e34025"], key="user_id")) == []
 
     seen_twice = idor.analyse(_rows([4021, 4022]))
     assert [f.location for f in seen_twice] == ["body:thing"]
     assert seen_twice[0].distinct_ids == 2
 
 
-def test_a_named_reference_still_counts_on_one_sighting():
-    """The rule is for the guessy tier, not for a hinted or opaque ref."""
-    findings = idor.analyse(_rows(["6a951f7f1af62e63c9e34025"], key="user_id"))
+def test_the_floor_is_the_flag():
+    """One knob, not a hidden rule plus a flag that cannot reach past it."""
+    findings = idor.analyse(_rows(["6a951f7f1af62e63c9e34025"]), min_distinct=1)
 
     assert [f.id_type for f in findings] == ["objectid"]
     assert findings[0].distinct_ids == 1
