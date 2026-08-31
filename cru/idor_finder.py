@@ -139,7 +139,7 @@ STATIC_EXT = {
     "avif",
 }
 
-_TYPE_LABEL = {
+TYPE_LABEL = {
     "int": "sequential/numeric-int",
     "uuid": "uuid",
     "objectid": "mongo-objectid",
@@ -514,7 +514,7 @@ def _render_block(f: Finding) -> list[str]:
             f"[{f.severity.upper():<6} score {f.score:>2}] "
             f"{f.method} {f.host}  {f.endpoint}"
         ),
-        f"    where : {f.location}   type: {_TYPE_LABEL[f.id_type]}",
+        f"    where : {f.location}   type: {TYPE_LABEL[f.id_type]}",
         f"    IDs   : {sample}",
         (
             f"    resp  : {f.statuses or '—'}   "

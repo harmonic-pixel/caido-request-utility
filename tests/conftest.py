@@ -27,6 +27,9 @@ _BASE = (
     "response_status_code",
     "response_headers",
     "response_body",
+    # Not read by the checks, but idor_finder aggregates on it and the report
+    # runs that too — the fixture should carry what the real schema does.
+    "response_length",
 )
 
 # Which base columns get a decoded companion, and the companion's name.
@@ -44,6 +47,7 @@ _DEFAULTS = dict(
     response_status_code=200,
     response_headers="",
     response_body="",
+    response_length=0,
 )
 
 
@@ -64,7 +68,11 @@ def make_db():
         # Match real column affinities: is_tls/status are integers, not TEXT —
         # else a stored "0" would read back truthy and skew is_tls-sensitive
         # checks.
-        types = {"is_tls": "INTEGER", "response_status_code": "INTEGER"}
+        types = {
+            "is_tls": "INTEGER",
+            "response_status_code": "INTEGER",
+            "response_length": "INTEGER",
+        }
         coldefs = ", ".join(f"{c} {types.get(c, 'TEXT')}" for c in cols)
         con.execute(f"CREATE TABLE requests ({coldefs})")
         for r in rows:

@@ -37,6 +37,19 @@ Caido export ──(csv_to_sql)──┐
 Burp XML export ─(burp_to_sql)─┘
 ```
 
+One command does the lot — import, scan, report:
+
+```bash
+python -m cru export.csv -o report.html   # CSV in, findings and a report out
+python -m cru export.csv                  # import and print the findings
+python -m cru corpus.db -o report.html    # already imported, just report
+python -m cru history.xml --db burp.db    # a Burp export instead
+```
+
+The source is recognised by extension: `.csv` is a Caido export, `.xml` a Burp
+one, anything else is taken to be a database that is already built. The steps
+still stand on their own:
+
 ```bash
 python -m cru.passive_scan corpus.db --check all         # every check
 python -m cru.passive_scan corpus.db --check sqli --json # one check, JSON out
@@ -44,6 +57,10 @@ python -m cru.passive_scan corpus.db --show-secrets      # unredact secret match
 python -m cru.report_html corpus.db -o report.html       # JSON + self-contained HTML
 python -m cru.idor_finder corpus.db                      # IDOR candidates (separate tool)
 ```
+
+A full report (`--check all`) also carries `idor_finder`'s candidates under the
+check name `idor`, so they filter, search and show their request like any other
+finding. The terminal scan does not — run `idor_finder` for those.
 
 The decoded view spells JWTs out rather than leaving them as opaque tokens:
 each one appears as `{"alg": "HS256", ...}.{"sub": "42", ...}.<signature>`, so

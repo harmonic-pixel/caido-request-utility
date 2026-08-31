@@ -653,6 +653,35 @@ def test_report_points_at_the_message_the_evidence_came_from(tmp_path, make_db):
     assert '"tail":"zzz"' in pane[rec["match"][1] :]
 
 
+def test_report_includes_idor_candidates(tmp_path, make_db):
+    """IDOR rides along on a full run so it filters and reads like a check."""
+    from cru import report_html
+
+    db = tmp_path / "i.db"
+    con = make_db(
+        [
+            dict(path="/users/1", headers="Authorization: Bearer abc"),
+            dict(path="/users/2", headers="Authorization: Bearer abc"),
+            dict(path="/users/3", headers="Authorization: Bearer abc"),
+        ]
+    )
+    disk = sqlite3.connect(str(db))
+    con.backup(disk)
+    disk.close()
+
+    _rows, findings, _messages = report_html.collect(str(db), "requests", "all", False)
+    idor = [f for f in findings if f.check == "idor"]
+    assert idor, "no IDOR candidate in a full run"
+    assert idor[0].path == "/users/{int}", "the endpoint template is the path"
+    assert "distinct" in idor[0].detail
+
+    # ... and only on a full run: a single named check is just that check.
+    _rows, only_sqli, _messages = report_html.collect(
+        str(db), "requests", "sqli", False
+    )
+    assert not [f for f in only_sqli if f.check == "idor"]
+
+
 def test_report_message_offsets_survive_astral_characters(tmp_path, make_db):
     """Offsets are UTF-16 units because that is what JS string slicing counts."""
     from cru import report_html

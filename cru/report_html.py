@@ -21,6 +21,10 @@ via textContent / DOM building — the highlight is a <mark> element built by th
 DOM, never markup spliced into a string — and the embedded JSON escapes <, >, &,
 so the report cannot be XSS'd by what it shows.
 
+A full run (`--check all`) also folds in `idor_finder`'s candidates under the
+check name `idor`, so they filter, search and show their request like any other
+finding.
+
 Usage:
     python -m cru.report_html your.db -o report.html          # writes .html + .json
     python -m cru.report_html your.db -o out.html --json out.json
@@ -33,11 +37,54 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import json
+import sqlite3
 from dataclasses import asdict
 
+from cru import idor_finder as idor
 from cru import passive_scan as ps
+from cru.checks.base import Finding
 
 TOOL_VERSION = "1.0"
+
+
+def idor_findings(db, table):
+    """IDOR candidates as findings, so they filter and read like everything else.
+
+    `idor_finder` aggregates its own way and needs `response_length`, which the
+    scanner's loader does not select — hence its own read of the table. The
+    evidence is one observed ID rather than the whole sample, so the report can
+    point at it in the request; the rest of the sample is in the detail.
+    """
+    try:
+        rows = idor.load_rows(db, table)
+    except sqlite3.OperationalError:
+        # A database built before `response_length` existed: the scan findings
+        # are still worth a report, so skip the IDOR pass rather than fail.
+        return []
+    out = []
+    for c in idor.analyse(rows):
+        label = idor.TYPE_LABEL.get(c.id_type, c.id_type)
+        if c.confidence != "primary":
+            label += " (low confidence)"
+        auth = "no"
+        if c.auth_observed:
+            auth = "mixed" if c.unauth_observed else "yes"
+        out.append(
+            Finding(
+                "idor",
+                "review",
+                label,
+                c.host,
+                c.method,
+                c.endpoint,
+                c.location,
+                c.sample_ids[0] if c.sample_ids else "",
+                f"{c.note} — IDs seen: {', '.join(c.sample_ids)} "
+                f"({c.distinct_ids} distinct); responses {c.statuses or '—'}; "
+                f"auth: {auth}; requests: {c.request_count}",
+            )
+        )
+    return out
 
 
 def collect(db, table, check, show_secrets):
@@ -45,6 +92,10 @@ def collect(db, table, check, show_secrets):
     findings = []
     for c in ps.build_checks(check):
         findings.extend(c.run(rows))
+    # IDOR is a separate tool with its own aggregation, not a registered check,
+    # so it rides along only on a full run.
+    if check == "all":
+        findings.extend(idor_findings(db, table))
     findings.sort(key=lambda f: (f.host, f.check, f.path))
     # Locating runs while the findings still carry their raw evidence, against
     # the unmasked panes; masking is length-preserving, so the offsets survive.

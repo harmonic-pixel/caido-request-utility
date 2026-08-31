@@ -180,28 +180,8 @@ def test_populate_serialises_json_bodies(con):
 # export: a JSON body (idox hands back a dict, which SQLite cannot bind), a
 # multi-word reason phrase, and a Cookie header. It is also the only test that
 # drives the real entry point, CSV parsing included.
-def test_create_and_populate_from_a_realistic_csv(tmp_path, con):
-    rows = [
-        (
-            (
-                "GET /a HTTP/1.1\r\nHost: app.test\r\n"
-                "Cookie: session=abc; theme=dark\r\n\r\n"
-            ),
-            (
-                "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\n"
-                '\r\n{"error": "nope"}'
-            ),
-            404,
-        ),
-        (
-            (
-                "POST /b HTTP/1.1\r\nHost: app.test\r\n"
-                'Content-Type: application/json\r\n\r\n{"user": "admin"}'
-            ),
-            "HTTP/1.1 500 Internal Server Error\r\n\r\nboom",
-            500,
-        ),
-    ]
+def _write_csv(tmp_path, rows):
+    """Write (request, response, status) triples out as a Caido-shaped export."""
     csv_file = tmp_path / "export.csv"
     with open(csv_file, "w", newline="") as handle:
         writer = csv.writer(handle)
@@ -226,6 +206,32 @@ def test_create_and_populate_from_a_realistic_csv(tmp_path, con):
                     0,
                 )
             )
+    return csv_file
+
+
+def test_create_and_populate_from_a_realistic_csv(tmp_path, con):
+    rows = [
+        (
+            (
+                "GET /a HTTP/1.1\r\nHost: app.test\r\n"
+                "Cookie: session=abc; theme=dark\r\n\r\n"
+            ),
+            (
+                "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\n"
+                '\r\n{"error": "nope"}'
+            ),
+            404,
+        ),
+        (
+            (
+                "POST /b HTTP/1.1\r\nHost: app.test\r\n"
+                'Content-Type: application/json\r\n\r\n{"user": "admin"}'
+            ),
+            "HTTP/1.1 500 Internal Server Error\r\n\r\nboom",
+            500,
+        ),
+    ]
+    csv_file = _write_csv(tmp_path, rows)
 
     c2s.create_and_populate_from_csv(con, csv_file)
 
@@ -238,3 +244,35 @@ def test_create_and_populate_from_a_realistic_csv(tmp_path, con):
     assert imported[0][2] == 404 and "nope" in imported[0][3]
     assert "admin" in imported[1][1], "JSON body did not survive as text"
     assert imported[1][2] == 500
+
+
+def test_entry_point_imports_a_csv_and_leaves_a_database(tmp_path):
+    """`python -m cru export.csv` has to do the import step for you."""
+    import cru.__main__ as entry
+
+    csv_file = _write_csv(
+        tmp_path,
+        [
+            (
+                "GET /a HTTP/1.1\r\nHost: app.test\r\n\r\n",
+                "HTTP/1.1 200 OK\r\n\r\nok",
+                200,
+            )
+        ],
+    )
+
+    db = entry.build_db(csv_file, None)
+
+    assert db == csv_file.with_suffix(".db")
+    con = sqlite3.connect(db)
+    assert con.execute("SELECT COUNT(*) FROM requests").fetchone()[0] == 1
+    con.close()
+
+
+def test_entry_point_passes_an_existing_database_straight_through(tmp_path):
+    """A source that is not an export is already a corpus; don't re-import it."""
+    import cru.__main__ as entry
+
+    db = tmp_path / "corpus.db"
+    db.touch()
+    assert entry.build_db(db, None) == db
