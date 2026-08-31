@@ -147,6 +147,9 @@ TYPE_LABEL = {
 }
 # Kept per candidate. The text renderer shows the first few; the HTML report
 # lists them all, which is what you actually enumerate against.
+# Distinct values a review-tier candidate needs before it is worth reporting.
+_REVIEW_MIN_DISTINCT = 2
+
 _ID_SAMPLE = 100
 _TEXT_SAMPLE = 5
 
@@ -232,6 +235,70 @@ def path_candidates(path: str) -> list[Candidate]:
     return out
 
 
+# Parameter names whose integer is a quantity, a position or a flag — never an
+# object reference. A bare int on one of these is what filled the review tier
+# with pagination, canvas coordinates and array indices.
+NON_ID_PARAM_NAMES = frozenset(
+    {
+        "offset",
+        "limit",
+        "page",
+        "per_page",
+        "perpage",
+        "page_size",
+        "pagesize",
+        "size",
+        "count",
+        "min_count",
+        "max_count",
+        "total",
+        "index",
+        "idx",
+        "_key",
+        "key_index",
+        "x",
+        "y",
+        "z",
+        "w",
+        "h",
+        "width",
+        "height",
+        "top",
+        "left",
+        "quantity",
+        "qty",
+        "amount",
+        "price",
+        "version",
+        "port",
+        "timeout",
+        "ttl",
+        "depth",
+        "level",
+        "priority",
+        "order_by",
+        "sort",
+        "sort_order",
+        "timestamp",
+        "ts",
+        "expires",
+        "duration",
+        "retries",
+        "primitive_override",
+    }
+)
+
+
+def _leaf_name(key: str) -> str:
+    """The parameter's own name, minus the JSON path that led to it.
+
+    `node.parameters[0].value.value[0].y` is a `y`, and the fact that it sits
+    six levels down a document does not make it an identifier.
+    """
+    leaf = key.rsplit(".", 1)[-1]
+    return leaf.split("[", 1)[0].lower()
+
+
 def _param_candidates(pairs, source: str) -> list[Candidate]:
     out: list[Candidate] = []
     for k, v in pairs:
@@ -239,11 +306,12 @@ def _param_candidates(pairs, source: str) -> list[Candidate]:
         hinted = k.lower() in ID_PARAM_HINTS
         # High-entropy refs (uuid/objectid/hash) are always worth flagging.
         # Hinted names are primary at any value (int id or opaque slug).
-        # A bare int on an *unnamed* param is kept but demoted to `review`:
-        # it's often a quantity/page/flag, occasionally a real object ref.
+        # A bare int on an *unnamed* param is kept but demoted to `review`,
+        # and only when the name is not plainly a quantity or a position: an
+        # `offset`, a canvas `y`, an array `_key` is never an object ref.
         if t in ("uuid", "objectid", "hash") or hinted:
             confidence = "primary"
-        elif t == "int":
+        elif t == "int" and _leaf_name(k) not in NON_ID_PARAM_NAMES:
             confidence = "review"
         else:
             continue  # non-hinted, non-id-shaped value — genuinely not a ref
@@ -402,6 +470,13 @@ def analyse(rows) -> list[Finding]:
     findings: list[Finding] = []
     for (host, method, template, location, id_type), g in groups.items():
         statuses = sorted(g.statuses)
+        # A bare int on an unnamed parameter is a guess. Seen once it is not
+        # even that: one value is no evidence the endpoint enumerates, and a
+        # lone `600` or `1` was most of what this tier used to report. A named
+        # or high-entropy reference still stands on a single sighting.
+        if g.confidence == "review" and len(g.values) < _REVIEW_MIN_DISTINCT:
+            continue
+
         any_2xx = any(200 <= s < 300 for s in statuses)
         avg_len = int(statistics.mean(g.lengths)) if g.lengths else 0
         returns_body = avg_len > 200

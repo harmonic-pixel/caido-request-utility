@@ -935,6 +935,19 @@ def test_code_sees_python_inside_a_json_string(run_check):
         ("<?php\n$x = 1;\nsystem($cmd);\n?>", "code:generic-eval-exec-sink (exec)"),
         ("function f(){\n  require('child_process');\n}", "code:javascript (exec)"),
         ("#!/bin/sh\ncat /etc/passwd\n", "code:shell (exec)"),
+        # Beyond function definitions: what a program does line to line.
+        ("value = 2\nprint(value)\n", "code:python (syntax)"),
+        ("class Thing:\n    def go(self):\n        return 1\n", "code:python (syntax)"),
+        ("const total = 1;\nconsole.log(total);\n", "code:javascript (syntax)"),
+        ("function f(){\n  return 1;\n}\n", "code:javascript (syntax)"),
+        ("<?php\necho $name;\n", "code:php (syntax)"),
+        ("def go\n  puts 'hi'\nend\n", "code:ruby (syntax)"),
+        (
+            "public class A {\n  System.out.println(1);\n}",
+            "code:java-ognl (syntax)",
+        ),
+        ("param([string]$x)\nWrite-Host $x\n", "code:powershell (syntax)"),
+        ("#!/bin/sh\nexport A=1\n", "code:shell (syntax)"),
     ],
 )
 def test_code_in_a_json_string_is_seen_whatever_the_language(
@@ -944,6 +957,24 @@ def test_code_in_a_json_string_is_seen_whatever_the_language(
     rows = [dict(method="POST", body=json.dumps({"src": snippet}))]
 
     assert signature in {f.signature for f in run_check("code", rows)}
+
+
+def test_one_finding_per_rule_listing_where_it_fired(run_check):
+    """A rule reaching a snippet through two views is one finding, not two.
+
+    Rules stay apart, though: shell and PHP in the same body are different
+    leads, so they are never folded together.
+    """
+    body = json.dumps({"src": '#!/bin/sh\nexport A=1\necho "$A"\n'})
+    rows = [dict(method="POST", body=body)]
+
+    findings = run_check("code", rows)
+
+    by_sig = {f.signature: f for f in findings}
+    assert len(by_sig) == len(findings), "a rule was reported more than once"
+    shell = by_sig["code:shell (syntax)"]
+    assert len(shell.rules) > 1, "the places it matched are listed on it"
+    assert any("#json" in r for r in shell.rules)
 
 
 def test_json_view_does_not_double_report(run_check):
@@ -988,6 +1019,25 @@ def test_entropy_ignores_what_lives_inside_a_jwt(run_check):
     entropy = [f for f in findings if f.signature == "high-entropy-string"]
     assert not entropy, f"entropy reported JWT innards: {[f.evidence for f in entropy]}"
     assert any(f.signature == "jwt" for f in findings), "the token itself is a finding"
+
+
+def test_entropy_leaves_alone_what_a_detector_already_named(run_check):
+    """The sweep is for the *unlabelled*.
+
+    A Basic credential is high-entropy by nature and is already a
+    basic-auth-header finding; reporting the same bytes again is noise.
+    """
+    credential = "dXNlcjpwYXNzd29yZDEyMzQ1Njc4OTBhYmNkZWY="
+    rows = [dict(headers=f"Authorization: Basic {credential}")]
+
+    findings = run_check("secrets", rows)
+
+    assert any(f.signature == "basic-auth-header" for f in findings)
+    assert not [
+        f
+        for f in findings
+        if f.signature == "high-entropy-string" and credential in f.evidence
+    ]
 
 
 def test_entropy_still_reports_a_secret_beside_a_jwt(run_check):

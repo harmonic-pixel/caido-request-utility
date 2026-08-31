@@ -90,7 +90,7 @@ payloads it displays.
 | `secrets` | Vendor API keys and tokens, private keys, plus a high-entropy sweep |
 | `sqli` | DBMS errors in responses, SQLi-shaped payloads, and parameter names like `sqlQuery` or `orderBy` that compose the query |
 | `ssti` | Template-expression syntax in request inputs, tagged by templating style |
-| `code` | Fields carrying source or shell commands, JNDI/Log4Shell lookups |
+| `code` | Fields carrying source or shell commands in 7 languages, JNDI/Log4Shell lookups |
 | `srcleak` | Server-side source, `.env`/`web.config` credentials, `.git` metadata in responses |
 | `xss` | XSS payload vectors, and parameter values reflected back unencoded |
 | `xxe` | External and parameter entities, stream wrappers, and file-read tells |

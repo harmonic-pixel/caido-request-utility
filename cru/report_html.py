@@ -663,6 +663,10 @@ _TEMPLATE = r"""<!DOCTYPE html>
       det.appendChild(listing(f.paths,
         "seen on "+f.paths.length+" paths — same finding, deduplicated"));
     }
+    if((f.rules||[]).length>1){
+      det.appendChild(listing(f.rules,
+        f.rules.length+" places this rule matched — one finding, not one each"));
+    }
     if((f.ids||[]).length){
       det.appendChild(listing(f.ids,
         f.ids.length+" observed ID"+(f.ids.length===1?"":"s")

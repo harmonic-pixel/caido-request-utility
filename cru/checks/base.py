@@ -45,6 +45,9 @@ class _Finding:
     # Observed values behind the finding — the IDs an IDOR candidate was seen
     # with. Listed in the report the way `paths` is.
     ids: list[str] = field(default_factory=list)
+    # Every rule behind a combined finding: `code` reports one finding per
+    # request and lists what fired, rather than one per signature.
+    rules: list[str] = field(default_factory=list)
 
     def key(self):
         return (
@@ -71,6 +74,7 @@ def Finding(
     detail="",
     group=None,
     ids=None,
+    rules=None,
 ):
     """Construct a finding.
 
@@ -81,7 +85,7 @@ def Finding(
     `group` is optional: pass one when several occurrences are the same finding
     seen on different paths, and `_dedupe` will collapse them into one carrying
     every path. `ids` is optional too: the observed values behind the finding,
-    listed in the report.
+    listed in the report, as is `rules` for a finding that combines several.
     """
     return _Finding(
         check,
@@ -94,6 +98,7 @@ def Finding(
         detail,
         group=group,
         ids=list(ids or []),
+        rules=list(rules or []),
     )
 
 

@@ -111,9 +111,16 @@ class SecretScanner:
         for r in rows:
             for label, text in iter_fields(r):
                 # 1) high-precision detectors
+                claimed = []
                 for name, rx, sev in _SECRET_DETECTORS:
                     for m in rx.finditer(text):
                         hit = m.group(1) if (m.groups() and m.group(1)) else m.group(0)
+                        # This text now has a name. The entropy sweep exists
+                        # for the *unlabelled*, so it must not report the same
+                        # bytes again — the credential in an Authorization:
+                        # Basic header is high-entropy by nature, and it is
+                        # already a basic-auth-header finding.
+                        claimed.append(m.span())
                         # Same token, re-issued, is the same leaked credential:
                         # group it on the decoded claims as the jwt check does.
                         group = jwt_identity(hit) if name == "jwt" else None
@@ -133,17 +140,16 @@ class SecretScanner:
                         )
                 # 2) entropy pass for unlabelled high-entropy tokens
                 if self.entropy:
-                    out.extend(self._entropy(r, label, text))
+                    out.extend(self._entropy(r, label, text, claimed))
         return _dedupe(out)
 
-    def _entropy(self, r, label, text):
+    def _entropy(self, r, label, text, claimed=()):
         found = []
-        # A JWT is high-entropy by construction, and so is every claim value and
-        # the signature inside it. Reporting those as unlabelled secrets buries
-        # the report in noise that the `jwt` detector and the `jwt` check
-        # already cover as one finding. Skip the spans they occupy — in the raw
-        # token and in the expanded view `field_decode` writes for it.
-        jwt_spans = [
+        # Anything a detector already named, plus the JWTs. A JWT is
+        # high-entropy by construction, and so is every claim value and
+        # signature inside it — including in the expanded view `field_decode`
+        # writes, which no detector matches.
+        skip = list(claimed) + [
             m.span() for rx in (JWT_RE, JWT_DECODED_RE) for m in rx.finditer(text)
         ]
         for m in _B64_TOKEN.finditer(text):
@@ -151,7 +157,7 @@ class SecretScanner:
             if len(tok) < _ENTROPY_MIN_LEN or _ENTROPY_SKIP.match(tok):
                 continue
             start, end = m.span()
-            if any(s <= start and end <= e for s, e in jwt_spans):
+            if any(s <= start and end <= e for s, e in skip):
                 continue
             is_hex = bool(_HEXish.match(tok))
             ent = shannon_entropy(tok)

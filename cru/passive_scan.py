@@ -85,6 +85,9 @@ def render_text(findings):
             if len(f.paths) > 1:
                 lines.append(f"    paths : {len(f.paths)}")
                 lines += [f"      {p}" for p in f.paths]
+            if len(f.rules) > 1:
+                lines.append(f"    rules : {len(f.rules)}")
+                lines += [f"      {rule}" for rule in f.rules]
             lines.append("")
     return "\n".join(lines)
 

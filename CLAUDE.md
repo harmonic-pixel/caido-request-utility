@@ -81,11 +81,13 @@ fingerprint methods mixedcontent cleartext csrf
 ```
 
 ### Finding
-`Finding(check, severity, signature, host, method, path, location, evidence, detail, group)`
+`Finding(check, severity, signature, host, method, path, location, evidence, detail, group, ids, rules)`
 is a constructor shim. **Severity is intentionally accepted but discarded** —
 this tool does not rank by severity (the user removed it deliberately; do not
 re-add it). The stored dataclass `_Finding` has fields:
-`check, signature, host, method, path, location, evidence, detail, paths, group`.
+`check, signature, host, method, path, location, evidence, detail, paths, group,
+ids, rules`. `ids` and `rules` are listings the report renders as dropdowns: the
+values an IDOR candidate was seen with, and every place a `code` rule matched.
 `paths` is every path the finding stood for and `group` is an optional dedup
 identity: pass one to `Finding`/`_emit` and `_dedupe` merges occurrences that
 share it into a single finding carrying all their paths, instead of keying on

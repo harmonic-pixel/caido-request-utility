@@ -138,8 +138,10 @@ tokens no detector knows about.
   `--no-entropy` disables the second pass.
 - **Limits:** `generic-secret-assignment` is deliberately noisy — it catches
   `password=` in traffic that is merely *about* passwords. The entropy pass
-  skips UUID-prefixed values, 24/32/40/64-character hex (almost always hashes
-  or IDs, not secrets), and anything inside a JWT — the token, its claim values
+  skips anything a detector has already named — the sweep is for the
+  *unlabelled*, and a Basic credential is high-entropy by nature but is already
+  a `basic-auth-header` finding — plus UUID-prefixed values, 24/32/40/64-character
+  hex (almost always hashes or IDs, not secrets), and anything inside a JWT — the token, its claim values
   and its signature, in the raw form and in the decoded view — because a JWT is
   high-entropy by construction and the `jwt` detector already reports it once.
   The hex rule also means a 32-hex API key is missed. The
@@ -206,10 +208,19 @@ A parameter that accepts raw source or a shell command is a parameter that may
 reach an `eval()` / `exec()` / command sink.
 
 - **Reads:** `request_inputs` only.
-- **Signatures:** two tiers per language. `exec` covers execution and eval
-  sinks; `syntax` covers language structure that merely suggests the field takes
-  code. Languages: Python, JavaScript/Node, PHP, Ruby, Java/OGNL, PowerShell,
-  and shell. Cross-language sinks (`eval` / `exec` / `system` / `passthru` /
+- **Dedup:** one finding per rule per request, with every place that rule
+  matched listed on it — a snippet reachable through both the raw body and its
+  `#json` view is one lead. Rules are *not* folded together: shell and PHP in
+  the same body are different findings. Within a field, the first rule to claim
+  a fragment keeps it, so a shared token like `print(` or `echo` is not reported
+  once per language.
+- **Signatures:** two tiers per language, 17 in all. `exec` covers execution
+  and eval sinks; `syntax` covers language structure that merely suggests the
+  field takes code — not just a function definition but what a program does line
+  to line: `print(`/`echo`/`puts`/`console.log`/`Write-Host`/`System.out.println`,
+  an indented or terminated `return`, class and variable declarations, loops,
+  `except`/`end`/`fi`, shebangs and `export`. Languages: Python,
+  JavaScript/Node, PHP, Ruby, Java/OGNL, PowerShell, and shell. Cross-language sinks (`eval` / `exec` / `system` / `passthru` /
   `shell_exec` / `popen` / `proc_open`) are one shared signature so a single
   `eval(` is not reported once per language. JNDI/Log4Shell lookups
   (`${jndi:ldap:` and friends) and nested Log4j lookups (`${lower:`, `${env:`)
