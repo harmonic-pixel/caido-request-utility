@@ -1055,13 +1055,29 @@ def test_entropy_still_reports_a_secret_beside_a_jwt(run_check):
     )
 
 
-def test_ungrouped_findings_still_dedupe_per_path(run_check):
-    """Only grouped findings merge: everything else keeps path-level dedup."""
+def test_one_secret_is_one_finding_however_many_requests(run_check):
+    """A credential sprayed across a session is one thing to rotate."""
     rows = [
         dict(path="/a", response_body='{"k":"AKIAIOSFODNN7EXAMPLE"}'),
         dict(path="/b", response_body='{"k":"AKIAIOSFODNN7EXAMPLE"}'),
+        dict(path="/c", response_body='{"k":"AKIAI44QH8DHBEXAMPLE"}'),
     ]
 
     keys = [f for f in run_check("secrets", rows) if f.signature == "aws-access-key-id"]
-    assert len(keys) == 2
-    assert sorted(f.paths for f in keys) == [["GET /a"], ["GET /b"]]
+
+    assert len(keys) == 2, "one per distinct key, not one per request"
+    merged = next(f for f in keys if len(f.paths) > 1)
+    assert merged.paths == ["GET /a", "GET /b"]
+
+
+def test_ungrouped_findings_still_dedupe_per_path(run_check):
+    """A check that does not group keeps path-level dedup."""
+    payload = "<script>alert(1)</script>"
+    rows = [
+        dict(path="/a", query=f"q={payload}", response_body=payload),
+        dict(path="/b", query=f"q={payload}", response_body=payload),
+    ]
+
+    findings = [f for f in run_check("xss", rows) if f.check == "xss"]
+
+    assert {tuple(f.paths) for f in findings} == {("GET /a",), ("GET /b",)}

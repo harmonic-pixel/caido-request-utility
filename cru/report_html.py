@@ -724,7 +724,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
   }
 
   document.getElementById("foot").textContent=
-    "Passive analysis of captured traffic — findings are leads to confirm against systems you are authorised to test.";
+    "Passive analysis of captured traffic — findings are leads to confirm against systems you are authorised to test because I vibe coded the shit out of this.";
   render();
 })();
 </script>

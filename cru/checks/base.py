@@ -110,6 +110,15 @@ def Finding(
 _JWT_VOLATILE_CLAIMS = frozenset({"iat", "exp", "nbf", "jti", "auth_time", "nonce"})
 
 
+def value_identity(value):
+    """A dedup identity for a literal value, hashed so it stays out of output.
+
+    `group` is serialised into the report, so it must not carry the secret it
+    identifies.
+    """
+    return hashlib.sha256(value.encode("utf-8", "replace")).hexdigest()[:16]
+
+
 def jwt_identity(token):
     """A stable identity for a JWT: its header and its non-volatile claims.
 

@@ -13,6 +13,7 @@ from cru.checks.base import (
     iter_fields,
     jwt_identity,
     shannon_entropy,
+    value_identity,
 )
 
 # High-precision detectors: (name, regex, severity)
@@ -100,6 +101,16 @@ _ENTROPY_SKIP = re.compile(
 )  # UUID prefix
 
 
+def _side(label):
+    """Which half of the exchange a field belongs to.
+
+    Grouping keeps the two apart: a key you send and the same key coming back
+    in a response are different facts, and merging them would lose the leak.
+    The views of one field (`#decoded`, `#json`) are the same fact, and merge.
+    """
+    return "response" if label.startswith("response") else "request"
+
+
 class SecretScanner:
     name = "secrets"
 
@@ -121,9 +132,15 @@ class SecretScanner:
                         # Basic header is high-entropy by nature, and it is
                         # already a basic-auth-header finding.
                         claimed.append(m.span())
-                        # Same token, re-issued, is the same leaked credential:
-                        # group it on the decoded claims as the jwt check does.
-                        group = jwt_identity(hit) if name == "jwt" else None
+                        # One finding per secret, not per request it appeared
+                        # in: a credential sprayed across a browsing session is
+                        # one thing to rotate, and the requests are listed on
+                        # it. A JWT groups on its decoded claims, so a re-issued
+                        # token counts once; everything else on its own value.
+                        ident = (
+                            jwt_identity(hit) if name == "jwt" else value_identity(hit)
+                        )
+                        group = f"{_side(label)}:{ident}"
                         out.append(
                             Finding(
                                 self.name,
@@ -181,6 +198,7 @@ class SecretScanner:
                         label,
                         tok,
                         f"entropy={ent:.2f} len={len(tok)} — unlabelled, verify by hand",
+                        group=f"{_side(label)}:{value_identity(tok)}",
                     )
                 )
         return found

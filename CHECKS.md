@@ -126,9 +126,14 @@ tokens no detector knows about.
   Mailgun, PEM private-key blocks, JWTs, `Authorization: Basic`, and a generic
   `password=`/`api_key=`-style assignment. The entropy pass flags base64-ish
   tokens of length ≥ 20 scoring ≥ 4.5 bits, or hex tokens scoring ≥ 3.0.
-- **Dedup:** the `jwt` detector groups on decoded token content, exactly as the
-  `jwt` check does, so a re-issued session token is one finding listing every
-  path. Every other detector dedupes per path as before.
+- **Dedup:** one finding per secret, not per request it turned up in — a
+  credential sprayed across a browsing session is one thing to rotate, and the
+  requests are listed on the finding. The `jwt` detector groups on decoded
+  token content (so a re-issued session token counts once), everything else on
+  its own value, and the entropy sweep on the token it found. Request and
+  response stay apart: a key you send and the same key coming back are
+  different facts, and merging them would lose the leak. The views of one field
+  (`#decoded`, `#json`) are the same fact and merge.
 - **Redaction:** secret evidence is redacted for display (`redact` via
   `_present`) as `abcd…yz (44 chars)`, and masked in the report's message pane.
   A detector's match **is** the thing that gets hidden, so each one matches the
