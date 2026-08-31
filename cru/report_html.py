@@ -291,9 +291,11 @@ def build_report_doc(rows, findings, meta_extra, messages=None, repo_url=REPO_UR
     meta = {
         "tool": "passive_scan",
         "format_version": TOOL_VERSION,
+        # With the zone: a report gets read on another machine, and a bare
+        # local timestamp there is a guess.
         "generated": _dt.datetime.now(_dt.UTC)
         .astimezone()
-        .strftime("%Y-%m-%d %H:%M:%S"),
+        .strftime("%Y-%m-%d %H:%M:%S %Z (UTC%z)"),
         "rows": len(rows),
         "rows_scanned": len(rows),
         "total_findings": len(findings),

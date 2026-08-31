@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from idox import Idox, Request, Response
+from idox.exceptions import MalformedRequest, MalformedResponse
 from pypika import Column, Parameter, Query, Table
 
 import cru.schema
@@ -114,15 +115,37 @@ def create_request_table(con: sqlite3.Connection) -> None:
     cru.schema.create_requests_table(con)
 
 
-def _body_text(body: str | dict[str, Any]) -> str:
-    """idox JSON-parses a JSON body into a dict; SQLite only binds text."""
-    return json.dumps(body) if isinstance(body, dict) else body
+def _body_text(body: Any) -> str:
+    """idox JSON-parses a JSON body; SQLite only binds text.
+
+    Any JSON body, not just an object: a top-level array comes back as a list
+    and binds no better than a dict.
+    """
+    return body if isinstance(body, str) else json.dumps(body)
 
 
-def _request_row(row: tuple[Any, ...]) -> tuple[Any, ...]:
-    """Turn one raw_requests row into a requests row, in BASE_COLUMNS order."""
-    request_model: Request = Idox.split_request(b64decode(f"{row[5]}==").decode())
-    response_model: Response = Idox.split_response(b64decode(f"{row[10]}==").decode())
+def _text(raw: Any) -> str:
+    """Decode a base64 raw message, lossily.
+
+    A corpus carries binary — images, fonts, compressed bodies — and a strict
+    decode aborts the whole page over one of them. Replacement characters in a
+    body nobody was going to pattern-match beat losing the import.
+    """
+    return b64decode(f"{raw}==").decode("utf-8", "replace")
+
+
+def _request_row(row: tuple[Any, ...]) -> tuple[Any, ...] | None:
+    """Turn one raw_requests row into a requests row, in BASE_COLUMNS order.
+
+    None when the message will not parse. The row is dropped rather than
+    imported half-built: a request whose headers we could not read would have
+    the header checks reporting everything as missing from it.
+    """
+    try:
+        request_model: Request = Idox.split_request(_text(row[5]))
+        response_model: Response = Idox.split_response(_text(row[10]))
+    except (MalformedRequest, MalformedResponse):
+        return None
     return (
         row[0],  # host
         row[1],  # method
@@ -143,8 +166,13 @@ def _request_row(row: tuple[Any, ...]) -> tuple[Any, ...]:
     )
 
 
-def populate_requests_table(con: sqlite3.Connection) -> None:
-    """Populates the requests table"""
+def populate_requests_table(con: sqlite3.Connection) -> int:
+    """Populate the requests table; return how many rows would not parse.
+
+    One unparseable message must not cost the whole import — a corpus of real
+    traffic always has some — so they are counted and reported, never dropped
+    in silence.
+    """
     base_query = (
         Query.from_(RAW_REQUESTS_TABLE)
         .select(
@@ -165,6 +193,7 @@ def populate_requests_table(con: sqlite3.Connection) -> None:
         .orderby("id")
         .limit(PAGE_SIZE)
     )
+    skipped = 0
     current_offset = 0
     while True:
         query = deepcopy(base_query).offset(current_offset)
@@ -177,10 +206,13 @@ def populate_requests_table(con: sqlite3.Connection) -> None:
             break
         current_offset += len(requests)
 
-        cru.schema.insert_rows(con, (_request_row(row) for row in requests))
+        parsed = [_request_row(row) for row in requests]
+        skipped += sum(1 for p in parsed if p is None)
+        cru.schema.insert_rows(con, (p for p in parsed if p is not None))
 
         if len(requests) < PAGE_SIZE:
             break
+    return skipped
 
 
 def create_and_populate_from_csv(con: sqlite3.Connection, csv_file: Path) -> None:
@@ -190,4 +222,6 @@ def create_and_populate_from_csv(con: sqlite3.Connection, csv_file: Path) -> Non
     import_csv(con, csv_file)
     drop_request_table(con)
     create_request_table(con)
-    populate_requests_table(con)
+    skipped = populate_requests_table(con)
+    if skipped:
+        print(f"warning: {skipped} request(s) would not parse and were skipped")

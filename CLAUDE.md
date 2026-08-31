@@ -214,7 +214,11 @@ cookies_decoded, headers_decoded, response_body_decoded`. Indexed on
 `created_at`, `response_created_at`, `host`, `method`, `response_status_code`.
 
 `csv_to_sql` also builds `raw_requests`, a verbatim copy of the Caido export, and
-derives `requests` from it in pages of `PAGE_SIZE`.
+derives `requests` from it in pages of `PAGE_SIZE`. Raw messages are decoded
+lossily (a corpus carries images and compressed bodies), JSON bodies of any
+shape are re-serialised for binding, and a message idox will not parse is
+skipped and counted rather than aborting the import — `populate_requests_table`
+returns the count and `create_and_populate_from_csv` prints it.
 
 Known corpus limits (documented in CHECKS.md, keep true): duplicate headers
 collapse (so `crlf`/duplicate-`Set-Cookie` can't be *confirmed* from responses —

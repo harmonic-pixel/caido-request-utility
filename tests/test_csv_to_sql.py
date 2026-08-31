@@ -276,3 +276,91 @@ def test_entry_point_passes_an_existing_database_straight_through(tmp_path):
     db = tmp_path / "corpus.db"
     db.touch()
     assert entry.build_db(db, None) == db
+
+
+def test_a_body_with_a_blank_line_in_it_imports(tmp_path, con):
+    """A message body can hold a blank line; that is not malformed."""
+    body = "para one\r\n\r\npara two"
+    csv_file = _write_csv(
+        tmp_path,
+        [
+            (
+                (
+                    "POST /a HTTP/1.1\r\nHost: app.test\r\n"
+                    f"Content-Length: {len(body)}\r\n\r\n{body}"
+                ),
+                "HTTP/1.1 200 OK\r\n\r\nok",
+                200,
+            )
+        ],
+    )
+
+    c2s.create_and_populate_from_csv(con, csv_file)
+
+    stored = con.execute("SELECT body FROM requests").fetchone()[0]
+    assert "para two" in stored
+
+
+def test_a_binary_body_does_not_abort_the_import(tmp_path, con):
+    """A corpus carries images and compressed bodies; a strict decode aborts."""
+    raw = b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\n\r\n\x89PNG\xa8\xff\x00"
+    csv_file = tmp_path / "bin.csv"
+    with open(csv_file, "w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(c2s.RAW_COLUMNS)
+        writer.writerow(
+            (
+                0,
+                "app.test",
+                "GET",
+                "/a",
+                10,
+                443,
+                _b64_field("GET /a HTTP/1.1\r\nHost: app.test\r\n\r\n"),
+                1,
+                "",
+            )
+            + (
+                "",
+                "",
+                "",
+                0,
+                "",
+                0,
+                0,
+                200,
+                base64.b64encode(raw).decode().rstrip("="),
+                2,
+                "",
+                0,
+                "",
+                0,
+            )
+        )
+
+    c2s.create_and_populate_from_csv(con, csv_file)
+
+    assert con.execute("SELECT COUNT(*) FROM requests").fetchone()[0] == 1
+
+
+def test_an_unparseable_message_is_skipped_and_counted(tmp_path, con):
+    """One bad message must not cost the whole import, or pass unmentioned."""
+    csv_file = _write_csv(
+        tmp_path,
+        [
+            ("not an HTTP request at all", "HTTP/1.1 200 OK\r\n\r\nok", 200),
+            (
+                "GET /a HTTP/1.1\r\nHost: app.test\r\n\r\n",
+                "HTTP/1.1 200 OK\r\n\r\nok",
+                200,
+            ),
+        ],
+    )
+    c2s.create_raw_table(con)
+    c2s.create_request_table(con)
+    c2s.import_csv(con, csv_file)
+
+    skipped = c2s.populate_requests_table(con)
+
+    assert skipped == 1
+    assert con.execute("SELECT COUNT(*) FROM requests").fetchone()[0] == 1

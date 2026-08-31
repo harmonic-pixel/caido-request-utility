@@ -178,6 +178,8 @@ skipped and counted); `<response>`, `<host>`, `<port>`, `<protocol>`,
   need nothing extra.
 - The export carries no timestamps, so `created_at` and `response_created_at`
   are written as `0`.
+- A message that will not parse is skipped, counted and reported rather than
+  failing the import; real traffic always has a few.
 - The `*_decoded` columns are filled at import time, so a Burp-imported database
   has encoding coverage from the start. That also means a database imported
   before a decoding change keeps the old columns — re-import to pick one up.
