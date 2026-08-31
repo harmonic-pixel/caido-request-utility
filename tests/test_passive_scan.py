@@ -14,12 +14,15 @@ finding for that check) and a NEGATIVE case (a benign row that must not). Cases
 are declared as data so the matrix is easy to read and extend.
 """
 
+import pathlib
 import sqlite3
 
 import pytest
 
+import cru.checks
 from cru import field_decode
 from cru import passive_scan as ps
+from cru.checks import CHECKS
 
 
 def checks_of(findings):
@@ -297,6 +300,19 @@ NEGATIVE = {
 ALL_CHECKS = sorted(c.name for c in ps.build_checks("all"))
 
 
+def test_every_check_module_is_registered():
+    """A module in cru/checks/ that nobody registered is a check that never runs.
+
+    `build_checks` and the --check choices both read the registry, so an
+    unregistered module fails silently everywhere else, this test included.
+    """
+    package = pathlib.Path(cru.checks.__file__).parent
+    modules = {p.stem for p in package.glob("*.py")} - {"__init__", "base"}
+    assert modules == set(CHECKS)
+    for key, cls in CHECKS.items():
+        assert cls.name == key, f"{cls.__name__}.name is not its registry key"
+
+
 def test_every_check_has_cases():
     """Guard: the matrix must cover every registered check."""
     missing_pos = [c for c in ALL_CHECKS if c not in POSITIVE]
@@ -535,16 +551,71 @@ def test_report_json_html_roundtrip(tmp_path, make_db):
     con.backup(disk)
     disk.close()
 
-    rows, findings = report_html.collect(str(db), "requests", "secrets", False)
-    doc = report_html.build_report_doc(rows, findings, {"db": str(db)})
+    rows, findings, messages = report_html.collect(
+        str(db), "requests", "secrets", False
+    )
+    doc = report_html.build_report_doc(rows, findings, {"db": str(db)}, messages)
     assert doc["meta"]["total_findings"] == len(findings) >= 1
     html = report_html.render_html(doc)
     # payload must be escaped in the embedded JSON (no raw </script>, and the
-    # secret is redacted by default)
+    # secret is redacted by default — in the message text too, not just the
+    # finding, or the report would leak what the finding hides)
     assert "AKIAIOSFODNN7EXAMPLE" not in html
     assert '<script id="r-data"' in html
     # re-render from the doc alone reproduces the same HTML
     assert report_html.render_html(doc) == html
+
+
+def test_report_points_at_the_message_the_evidence_came_from(tmp_path, make_db):
+    """The dropdown shows the request/response, with the evidence located in it.
+
+    Masking a secret in the message has to preserve length, or every offset
+    after it — including this finding's own — would point at the wrong text.
+    """
+    from cru import report_html
+
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    db = tmp_path / "m.db"
+    con = make_db(
+        [dict(path="/a", query="q=1", body=f'{{"key":"{secret}","tail":"zzz"}}')]
+    )
+    disk = sqlite3.connect(str(db))
+    con.backup(disk)
+    disk.close()
+
+    rows, findings, messages = report_html.collect(
+        str(db), "requests", "secrets", False
+    )
+    doc = report_html.build_report_doc(rows, findings, {"db": str(db)}, messages)
+    rec = next(f for f in doc["findings"] if f["signature"] == "aws-access-key-id")
+
+    pane = doc["messages"][str(rec["row"])][rec["pane"]]
+    assert pane.startswith("GET /a?q=1 HTTP/1.1")
+    assert secret not in pane, "the message must not leak what the finding hides"
+    # The offsets still land on the (masked) secret, and nothing after it moved.
+    assert pane[rec["match"][0] : rec["match"][1]] == report_html._mask(secret)
+    assert '"tail":"zzz"' in pane[rec["match"][1] :]
+
+
+def test_report_message_offsets_survive_astral_characters(tmp_path, make_db):
+    """Offsets are UTF-16 units because that is what JS string slicing counts."""
+    from cru import report_html
+
+    db = tmp_path / "u.db"
+    con = make_db([dict(response_body='{"note":"\U0001f600","k":"sk-live-x"}')])
+    disk = sqlite3.connect(str(db))
+    con.backup(disk)
+    disk.close()
+
+    rows, findings, messages = report_html.collect(str(db), "requests", "secrets", True)
+    doc = report_html.build_report_doc(rows, findings, {"db": str(db)}, messages)
+    for rec in doc["findings"]:
+        if not rec["match"]:
+            continue
+        pane = doc["messages"][str(rec["row"])][rec["pane"]]
+        units = pane.encode("utf-16-le")
+        sliced = units[rec["match"][0] * 2 : rec["match"][1] * 2].decode("utf-16-le")
+        assert sliced == report_html._needle(rec["evidence"])
 
 
 def test_legacy_db_without_decoded_columns_still_scans():

@@ -7,14 +7,19 @@ rendered from that same document. The JSON is the intermediary: the HTML embeds
 exactly the JSON that is written to disk, and `--from-json` re-renders the HTML
 from an existing results file without rescanning.
 
-The JSON document has three parts: `meta` (db, timestamp, row count, check
-selection), `summary` (counts by check / host), and `findings` (every
-finding with full context). Secret redaction is applied before the document is
-built, so the JSON respects --show-secrets too.
+The JSON document has four parts: `meta` (db, timestamp, row count, check
+selection), `summary` (counts by check / host), `messages` (the request and
+response a finding came out of, reconstructed once per row) and `findings`
+(every finding with full context, each pointing at its message and at the
+offsets of its evidence inside it). Secret redaction is applied before the
+document is built, so the JSON respects --show-secrets too — messages included:
+a secret is hidden in the message text as well as in the finding.
 
-Security note: findings contain attacker-controlled payloads (XSS, etc.). Every
-finding value is rendered client-side via textContent / DOM building, and the
-embedded JSON escapes <, >, & — so the report cannot be XSS'd by what it shows.
+Security note: findings and messages contain attacker-controlled payloads (XSS,
+etc.). Every finding value and every byte of a message is rendered client-side
+via textContent / DOM building — the highlight is a <mark> element built by the
+DOM, never markup spliced into a string — and the embedded JSON escapes <, >, &,
+so the report cannot be XSS'd by what it shows.
 
 Usage:
     python -m cru.report_html your.db -o report.html          # writes .html + .json
@@ -40,12 +45,137 @@ def collect(db, table, check, show_secrets):
     findings = []
     for c in ps.build_checks(check):
         findings.extend(c.run(rows))
-    findings = ps._present(findings, show_secrets=show_secrets)
     findings.sort(key=lambda f: (f.host, f.check, f.path))
-    return rows, findings
+    # Locating runs while the findings still carry their raw evidence, against
+    # the unmasked panes; masking is length-preserving, so the offsets survive.
+    # It runs after the sort because the locations are aligned by index.
+    messages = build_messages(rows, findings, show_secrets=show_secrets)
+    findings = ps._present(findings, show_secrets=show_secrets)
+    return rows, findings, messages
 
 
-def build_report_doc(rows, findings, meta_extra):
+# --------------------------------------------------------------------------- #
+# Messages: the request and response a finding came out of
+# --------------------------------------------------------------------------- #
+
+# Per pane. A report is a triage view, not an archive of the corpus, but the
+# cap has to clear a real response body or the evidence falls off the end and
+# the finding loses its highlight.
+# ponytail: flat cap. Window the pane around the match if a corpus of very
+# large bodies makes the report unwieldy.
+_PANE_CAP = 200_000
+
+
+def _request_text(row):
+    """Reconstruct the request from the stored fields.
+
+    Not the captured bytes — `requests` keeps the parts, not the raw message —
+    but the same fields the checks read, in wire order.
+    """
+    query = row["query"] or ""
+    line = f"{row['method'] or ''} {row['path'] or ''}"
+    if query:
+        line += "?" + query
+    head = [line + " HTTP/1.1"]
+    if row["headers"]:
+        head.append(row["headers"])
+    return "\n".join(head) + "\n\n" + (row["body"] or "")
+
+
+def _response_text(row):
+    status = row["response_status_code"]
+    head = [f"HTTP/1.1 {status}" if status is not None else "HTTP/1.1"]
+    if row["response_headers"]:
+        head.append(row["response_headers"])
+    return "\n".join(head) + "\n\n" + (row["response_body"] or "")
+
+
+def _needle(evidence):
+    """The literal text to look for: evidence minus `_snippet`'s cosmetics."""
+    return (evidence or "").removesuffix("…").replace("\\n", "\n")
+
+
+def _utf16_len(text):
+    """Length in UTF-16 code units — what JS string offsets count."""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def _mask(secret):
+    """`redact`'s shape, at `redact`'s expense, in the same number of units.
+
+    Same-length means every offset computed against the unmasked pane still
+    points at the same characters afterwards, so masking a secret cannot move
+    another finding's highlight.
+    """
+    units = _utf16_len(secret)
+    if units <= 8:
+        return secret[:1] + "•" * (units - 1) if units else ""
+    return secret[:4] + "•" * (units - 6) + secret[-2:]
+
+
+def _panes_for(row):
+    panes = {
+        "request": _request_text(row)[:_PANE_CAP],
+        "response": _response_text(row)[:_PANE_CAP],
+    }
+    # The decoded views are why a base64-wrapped payload can still be pointed
+    # at: its evidence lives in `body_decoded`, not in the body on the wire.
+    for label, text in ps.iter_fields(row):
+        if label.endswith("#decoded") and text:
+            panes[label] = text[:_PANE_CAP]
+    return panes
+
+
+def _locate(finding, rows, panes):
+    """Which pane holds a finding's evidence, and where in it.
+
+    Returns `(row_index, pane, [start, end])` in UTF-16 units, with a match of
+    None when there is nothing to point at — a *missing* header has no text to
+    highlight, and the request is still worth showing as context.
+    """
+    needle = _needle(finding.evidence)
+    same_host = [i for i, row in enumerate(rows) if row["host"] == finding.host]
+    on_path = [
+        i for i in same_host if not finding.path or rows[i]["path"] == finding.path
+    ]
+    fallback = on_path[0] if on_path else (same_host[0] if same_host else None)
+    if not needle:
+        return fallback, "request", None
+    # Findings dedupe, so the path on a finding is one representative row's —
+    # the evidence may sit on a sibling path under the same host. Prefer the
+    # named path, then settle for anywhere on the host.
+    # ponytail: linear scan of the corpus per finding. Fine for a report over a
+    # browsing session; index by (host, path) if a big corpus makes it drag.
+    for i in on_path + [i for i in same_host if i not in on_path]:
+        for pane, text in panes[i].items():
+            at = text.find(needle)
+            if at >= 0:
+                start = _utf16_len(text[:at])
+                return i, pane, [start, start + _utf16_len(needle)]
+    return fallback, "request", None
+
+
+def build_messages(rows, findings, show_secrets):
+    """Panes per row, and where each finding's evidence sits in them.
+
+    Findings must still hold their raw evidence here. Locating happens against
+    the unmasked text; the secrets are then masked in place, which a message
+    needs or it would leak in full what its own finding hides.
+    """
+    panes = {i: _panes_for(row) for i, row in enumerate(rows)}
+    locations = [_locate(f, rows, panes) for f in findings]
+
+    if not show_secrets:
+        secrets = {f.evidence for f in findings if f.check == "secrets" and f.evidence}
+        for row_panes in panes.values():
+            for name, text in row_panes.items():
+                for raw in secrets:
+                    text = text.replace(raw, _mask(raw))
+                row_panes[name] = text
+    return {"panes": panes, "locations": locations}
+
+
+def build_report_doc(rows, findings, meta_extra, messages=None):
     """The verbose JSON document — the intermediary the HTML is built from."""
     by_check, by_host = {}, {}
     for f in findings:
@@ -64,10 +194,18 @@ def build_report_doc(rows, findings, meta_extra):
     }
     meta.update(meta_extra or {})
 
-    records = []
+    panes = (messages or {}).get("panes", {})
+    locations = (messages or {}).get("locations", [])
+    records, used = [], {}
     for i, f in enumerate(findings):
         rec = {"id": i}
         rec.update(asdict(f))
+        row, pane, match = locations[i] if i < len(locations) else (None, None, None)
+        rec.update({"row": row, "pane": pane, "match": match})
+        if row is not None:
+            # Keep the request and response of any row a finding points at, and
+            # a decoded pane only when a finding actually landed in one.
+            used.setdefault(row, {"request", "response"}).add(pane)
         records.append(rec)
 
     return {
@@ -75,6 +213,10 @@ def build_report_doc(rows, findings, meta_extra):
         "summary": {
             "by_check": dict(sorted(by_check.items())),
             "by_host": dict(sorted(by_host.items())),
+        },
+        "messages": {
+            str(row): {k: v for k, v in panes[row].items() if k in keep}
+            for row, keep in sorted(used.items())
         },
         "findings": records,
     }
@@ -189,6 +331,19 @@ _TEMPLATE = r"""<!DOCTYPE html>
   .evidence{font-family:var(--mono);font-size:12px;background:#0f1420;
     color:#e7edf6;padding:10px 12px;border-radius:6px;margin:8px 0 12px;
     white-space:pre-wrap;word-break:break-all;max-height:220px;overflow:auto}
+  .msg-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 0}
+  .msg-tab{font-family:var(--mono);font-size:11px;color:var(--ink-soft);
+    background:var(--surface);border:1px solid var(--line);border-radius:5px;
+    padding:3px 9px;cursor:pointer}
+  .msg-tab:hover{border-color:var(--accent);color:var(--accent)}
+  .msg-tab.on{color:#fff;background:var(--accent);border-color:var(--accent)}
+  .msg{font-family:var(--mono);font-size:12px;line-height:1.5;background:#0f1420;
+    color:#e7edf6;padding:10px 12px;border-radius:6px;margin:8px 0 6px;
+    white-space:pre-wrap;word-break:break-all;max-height:340px;overflow:auto}
+  .msg mark{background:#ffd54a;color:#14181f;border-radius:2px;padding:0 1px;
+    box-shadow:0 0 0 2px #ffd54a}
+  .msg-note{font-family:var(--mono);font-size:11px;color:var(--ink-soft);
+    margin:0 0 12px}
 
   .empty{text-align:center;color:var(--ink-soft);font-family:var(--mono);
     padding:60px 20px}
@@ -228,6 +383,7 @@ _TEMPLATE = r"""<!DOCTYPE html>
   var DATA = JSON.parse(document.getElementById("r-data").textContent);
   var F = DATA.findings || [];
   var META = DATA.meta || {};
+  var MSG = DATA.messages || {};
   var state = { checks:{}, host:"all", q:"" };
   // counts
   var checkCount={}, hosts={};
@@ -239,6 +395,21 @@ _TEMPLATE = r"""<!DOCTYPE html>
 
   function el(tag,cls,txt){var e=document.createElement(tag);
     if(cls)e.className=cls; if(txt!=null)e.textContent=txt; return e;}
+
+  // The message is attacker-controlled text: every part of it goes in as a text
+  // node, and the highlight is a real <mark> element, never spliced-in markup.
+  function paint(pre,text,match){
+    pre.textContent="";
+    if(!match){ pre.appendChild(document.createTextNode(text)); return; }
+    pre.appendChild(document.createTextNode(text.slice(0,match[0])));
+    var m=document.createElement("mark");
+    m.textContent=text.slice(match[0],match[1]);
+    pre.appendChild(m);
+    pre.appendChild(document.createTextNode(text.slice(match[1])));
+    requestAnimationFrame(function(){
+      if(m.offsetTop>pre.clientHeight*0.6) pre.scrollTop=m.offsetTop-pre.clientHeight/3;
+    });
+  }
 
   // meta line
   (function(){
@@ -348,7 +519,31 @@ _TEMPLATE = r"""<!DOCTYPE html>
 
     var det=el("div","detail");
     if(f.detail) det.appendChild(el("div","note",f.detail));
-    if(f.evidence){ det.appendChild(el("div","evidence",f.evidence)); }
+    var msg=MSG[String(f.row)];
+    if(msg){
+      var names=Object.keys(msg);
+      var first=(f.pane && msg[f.pane]!==undefined)?f.pane:names[0];
+      var tabs=el("div","msg-tabs"), pre=el("pre","msg");
+      names.forEach(function(nm){
+        var b=el("button","msg-tab"+(nm===first?" on":""),nm);
+        b.type="button";
+        b.addEventListener("click",function(){
+          Array.prototype.forEach.call(tabs.children,function(x){
+            x.className="msg-tab";});
+          b.className="msg-tab on";
+          paint(pre,msg[nm],nm===f.pane?f.match:null);
+        });
+        tabs.appendChild(b);
+      });
+      det.appendChild(tabs); det.appendChild(pre);
+      paint(pre,msg[first],first===f.pane?f.match:null);
+      det.appendChild(el("div","msg-note", f.match
+        ? "Reconstructed from the stored fields; the match is highlighted."
+        : "Reconstructed from the stored fields. Nothing to highlight — this "
+          +"finding reports something absent or derived, not a quoted string."));
+    } else if(f.evidence){
+      det.appendChild(el("div","evidence",f.evidence));
+    }
     var kv=el("dl","kv");
     [["rule",f.signature],["check",f.check],["host",f.host||"—"],
      ["method",f.method||"—"],["path",f.path||"—"],
@@ -421,7 +616,9 @@ def main(argv=None):
     if not args.db:
         ap.error("a db argument is required unless --from-json is given")
 
-    rows, findings = collect(args.db, args.table, args.check, args.show_secrets)
+    rows, findings, messages = collect(
+        args.db, args.table, args.check, args.show_secrets
+    )
     doc = build_report_doc(
         rows,
         findings,
@@ -430,6 +627,7 @@ def main(argv=None):
             "check": args.check,
             "secrets_redacted": not args.show_secrets,
         },
+        messages,
     )
 
     json_path = _json_path_for(args.out, args.json)

@@ -22,12 +22,13 @@ Burp XML export ──(cru.burp_to_sql)──┘
 
 | File | Role |
 |------|------|
-| `cru/passive_scan.py` | The scanner: 24 checks + the runner/CLI. The core. |
+| `cru/checks/` | The scanner's core: one module per check, plus `base.py` and the `CHECKS` registry in `__init__.py`. |
+| `cru/passive_scan.py` | The scan runner and CLI. Loads rows, runs the registered checks, renders text/JSON. |
 | `cru/schema.py` | The `requests` table: columns, create/drop, bulk insert. One definition, shared. |
 | `cru/csv_to_sql.py` | Import a Caido CSV export: `raw_requests` then `requests`. |
 | `cru/burp_to_sql.py` | Import a Burp "Save items" XML export into the same schema. |
 | `cru/field_decode.py` | Shared base64/hex decoder. The importers call it at load time. |
-| `cru/report_html.py` | Build the verbose JSON report + a self-contained HTML view from it. |
+| `cru/report_html.py` | Build the verbose JSON report + a self-contained HTML view from it, including the reconstructed request/response each finding is highlighted in. |
 | `cru/idor_finder.py` | Standalone IDOR-candidate finder (separate tool, own aggregation). |
 | `cru/sql_util.py` | The DB seam: `execute` and `execute_many`. Override to target another DB. |
 | `tests/conftest.py` | Shared fixtures: `make_db` (in-memory corpus) and `run_check`. |
@@ -64,9 +65,12 @@ are optional in the Burp importer (safe fallbacks exist for both).
 
 ### The check interface
 Every check is a class with a `name` attribute and a `run(rows) -> list[Finding]`
-method. `rows` are `sqlite3.Row` objects from `load_rows`. Checks are registered
-in `build_checks()` (a dict) and exposed via the `--check` CLI choices — **update
-both** when adding a check. There are currently **24**:
+method. `rows` are `sqlite3.Row` objects from `load_rows`. Each check lives in
+its own module under `cru/checks/`, holding the class and the pattern tables only
+it uses; shared primitives are in `cru/checks/base.py`. Registration is one entry
+in the `CHECKS` dict in `cru/checks/__init__.py` — `build_checks()` and the
+`--check` CLI choices are both derived from it, so there is nothing else to keep
+in sync. There are currently **24**:
 
 ```
 deser secrets sqli ssti code srcleak xss xxe ssrf redirect traversal crlf
@@ -147,8 +151,14 @@ adding an all-or-nothing pattern.
 
 ### Security of the tooling itself
 - The scanner reads attacker-controlled data; the HTML report renders findings
-  via `textContent`/DOM building and escapes the embedded JSON — **never** inject
-  finding values into HTML as markup.
+  *and the message panes* via `textContent`/DOM building and escapes the embedded
+  JSON — the highlight is a `<mark>` element built by the DOM. **Never** inject a
+  finding value or message text into HTML as markup.
+- The report embeds whole request/response bodies, so secrets are masked inside
+  the message text as well as in the finding. The mask is **length-preserving**
+  (`report_html._mask`) because every match offset is computed against the
+  unmasked pane — shortening it would slide every later highlight off its text.
+  Offsets are UTF-16 units, which is what JS string slicing counts.
 - `burp_to_sql.py` parses XML safely (defusedxml or a hardened stdlib fallback
   that rejects DTDs/entities) — don't loosen this; it's the XXE surface the
   `xxe` check exists to catch.
@@ -183,9 +193,10 @@ passive.
   that the *test matrix* covers every registered check via
   `test_every_check_has_cases`; doc coverage is a convention, not yet enforced —
   consider adding a test if you touch it.)
-- When adding a check: implement the class, register in `build_checks()`, add to
-  the `--check` choices, add positive+negative test cases, a `CHECKS.md` entry,
-  and a row in the README table.
+- When adding a check: add `cru/checks/<name>.py` with the class, register it in
+  the `CHECKS` dict in `cru/checks/__init__.py`, add positive+negative test cases,
+  a `CHECKS.md` entry, and a row in the README table. The CLI picks it up from the
+  registry on its own.
 - Tests live in `tests/`. Shared fixtures go in `conftest.py`, not in the test
   module. Row dicts are built with `dict(...)` kwargs on purpose — ruff's C408 is
   disabled for `tests/*.py` for exactly that reason.

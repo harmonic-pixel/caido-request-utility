@@ -45,9 +45,14 @@ python -m cru.report_html corpus.db -o report.html       # JSON + self-contained
 python -m cru.idor_finder corpus.db                      # IDOR candidates (separate tool)
 ```
 
-Findings are grouped by check and are not ranked by severity. The HTML report is
-a single self-contained file that builds every finding value through
-`textContent`, so it cannot be XSS'd by the payloads it displays.
+Findings are grouped by check and are not ranked by severity. Expanding one
+shows the request it came out of — reconstructed from the stored fields, with
+the matched string highlighted — and tabs for the response and for any decoded
+view the evidence actually surfaced in. Secrets stay masked there too, so the
+message cannot leak what the finding hides; `--show-secrets` reveals both. The
+HTML report is a single self-contained file that builds every finding value and
+every byte of a message through `textContent`, so it cannot be XSS'd by the
+payloads it displays.
 
 ### The checks
 
