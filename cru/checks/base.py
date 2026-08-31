@@ -106,8 +106,27 @@ def Finding(
 
 
 # Claims that change on every issue of the same token, so two tokens differing
-# only in these are the same credential to a reviewer.
-_JWT_VOLATILE_CLAIMS = frozenset({"iat", "exp", "nbf", "jti", "auth_time", "nonce"})
+# only in these are the same credential to a reviewer. Alongside the timestamps
+# and the token id, the OIDC binding hashes belong here: `at_hash` and friends
+# are digests of whatever else was minted in that exchange, so a Google ID token
+# for one subject differs on `at_hash` at every refresh and on nothing else.
+# What is *not* here matters as much: `type` separates an access token from a
+# refresh token, and those are different credentials.
+_JWT_VOLATILE_CLAIMS = frozenset(
+    {
+        "iat",
+        "exp",
+        "nbf",
+        "jti",
+        "auth_time",
+        "nonce",
+        "at_hash",
+        "c_hash",
+        "s_hash",
+        "rt_hash",
+        "sid",
+    }
+)
 
 
 def value_identity(value):

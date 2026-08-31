@@ -897,6 +897,49 @@ def test_jwt_findings_dedupe_on_decoded_content(run_check):
     assert next(f for f in hmac if len(f.paths) == 1).paths == ["GET /c"]
 
 
+def test_reissued_oidc_tokens_are_one_credential(run_check):
+    """Google mints a fresh `at_hash` per refresh and changes nothing else.
+
+    `at_hash` is a digest of what else came out of that exchange, not part of
+    who the token is for, so three sightings of one subject's ID token were
+    three findings until it counted as volatile.
+    """
+    rows = [
+        dict(
+            method="POST",
+            path=f"/cb{i}",
+            body=_jwt(
+                {
+                    "iss": "accounts.google.com",
+                    "sub": "42",
+                    "email": "t@example.com",
+                    "at_hash": h,
+                    "iat": i,
+                    "exp": 100 + i,
+                }
+            ),
+        )
+        for i, h in enumerate(["JD2nS5zL3Imr", "NmtJJtzhjWp_", "mf6lUXVKzPkW"])
+    ]
+
+    tokens = [f for f in run_check("secrets", rows) if f.signature == "jwt"]
+
+    assert len(tokens) == 1, "a re-issued ID token is one credential"
+    assert len(tokens[0].paths) == 3
+
+
+def test_an_access_token_is_not_its_refresh_token(run_check):
+    """What is *not* volatile matters too: those are different credentials."""
+    rows = [
+        dict(method="POST", path="/a", body=_jwt({"username": "42", "type": "access"})),
+        dict(
+            method="POST", path="/b", body=_jwt({"username": "42", "type": "refresh"})
+        ),
+    ]
+
+    assert len([f for f in run_check("secrets", rows) if f.signature == "jwt"]) == 2
+
+
 def test_secrets_jwt_detector_dedupes_the_same_way(run_check):
     """The `jwt` detector in the secrets check groups on content too."""
     same_a = _jwt({"sub": "42", "iat": 1, "exp": 2})

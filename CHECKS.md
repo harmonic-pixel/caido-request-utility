@@ -135,7 +135,8 @@ tokens no detector knows about.
 - **Dedup:** one finding per secret, not per request it turned up in — a
   credential sprayed across a browsing session is one thing to rotate, and the
   requests are listed on the finding. The `jwt` detector groups on decoded
-  token content (so a re-issued session token counts once), everything else on
+  token content through the same `jwt_identity` the `jwt` check uses, so a
+  re-issued token counts once and the two agree by construction, everything else on
   its own value, and the entropy sweep on the token it found. Request and
   response stay apart: a key you send and the same key coming back are
   different facts, and merging them would lose the leak. The views of one field
@@ -437,10 +438,14 @@ Host-level.
   `alg=hs256` left the report with a finding it could not point at; the
   description is in the detail and the token is what gets highlighted.
 - **Dedup:** by decoded content. A token's identity is its header plus its
-  claims minus the volatile ones (`iat`, `exp`, `nbf`, `jti`, `auth_time`,
-  `nonce`), so a session refreshed across a browsing run is **one** finding
-  carrying every path it appeared on, not one per request. Two tokens differing
-  in any other claim stay separate findings.
+  claims minus the volatile ones — the timestamps and token id (`iat`, `exp`,
+  `nbf`, `jti`, `auth_time`, `nonce`) and the OIDC binding hashes (`at_hash`,
+  `c_hash`, `s_hash`, `rt_hash`, `sid`), which are digests of whatever else was
+  minted in the same exchange rather than part of who the token is for. So a
+  session refreshed across a browsing run is **one** finding carrying every
+  request it appeared on, not one per request. What is *not* volatile matters
+  as much: `type` separates an access token from a refresh token, and those stay
+  separate findings.
 - **Limits:** no signature verification and no key cracking — this reads claims
   only. A token whose segments do not decode as JSON is skipped silently, and is
   not grouped either — it stands on its own path.
