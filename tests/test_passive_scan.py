@@ -687,6 +687,29 @@ def test_idor_ids_are_listed_masked_and_bounded(tmp_path, make_db):
     assert token not in json.dumps(doc), "a credential escaped through ids"
 
 
+def test_a_finding_offers_the_decoded_view_of_its_own_field(tmp_path, make_db):
+    """A JWT in a cookie matches in the raw request, so nothing ever matched in
+    the decoded view — and the pane that spells the token out was pruned away
+    from the one finding that most wanted it.
+    """
+    from cru import report_html
+
+    db = tmp_path / "d.db"
+    con = make_db([dict(cookies=f"session={_jwt({'sub': '42', 'exp': 1})}")])
+    disk = sqlite3.connect(str(db))
+    con.backup(disk)
+    disk.close()
+
+    _rows, findings, messages = report_html.collect(str(db), "requests", "jwt", False)
+    doc = report_html.build_report_doc(_rows, findings, {"db": str(db)}, messages)
+    rec = doc["findings"][0]
+
+    assert rec["location"] == "request-cookies"
+    assert "request-cookies#decoded" in rec["panes"]
+    decoded = doc["messages"][str(rec["row"])]["request-cookies#decoded"]
+    assert '"sub"' in decoded, "the pane has to actually spell the token out"
+
+
 def test_a_finding_only_offers_its_own_panes(tmp_path, make_db):
     """The message store is per row, so relevance has to be per finding.
 

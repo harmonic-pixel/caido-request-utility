@@ -210,6 +210,29 @@ def _hide(text, secrets):
     return text
 
 
+# Which scannable field a parameter-level location belongs to.
+_FIELD_FOR_PARAM = {
+    "body": "request-body",
+    "query": "request-query",
+    "cookies": "request-cookies",
+}
+
+
+def _sibling_views(location, available):
+    """The decoded views of the field a finding came from.
+
+    A JWT in a cookie matches in the raw request, so nothing ever matched in
+    `request-cookies#decoded` and the pane that spells the token out was pruned
+    away — from the one finding that most wanted it. This offers the decoded
+    view of the field the finding is *about*, which is the rule the fingerprint
+    case wanted too: related to this finding, not to its neighbours.
+    """
+    base = location.split("#", 1)[0]
+    if ":" in base:
+        base = _FIELD_FOR_PARAM.get(base.split(":", 1)[0], "")
+    return [v for v in (f"{base}#decoded", f"{base}#json") if v in available]
+
+
 def _panes_for(row):
     panes = {
         "request": _request_text(row)[:_PANE_CAP],
@@ -323,14 +346,17 @@ def build_report_doc(rows, findings, meta_extra, messages=None, repo_url=REPO_UR
         if row is not None:
             # Keep the request and response of any row a finding points at, and
             # a decoded pane only when a finding actually landed in one.
-            used.setdefault(row, {"request", "response"}).add(pane)
             # The store is per row and several findings share it, so name the
-            # panes *this* finding should offer. Otherwise a fingerprint hit in
-            # a response header sprouts a #decoded tab that belongs to some
-            # other finding on the same request.
-            rec["panes"] = ["request", "response"] + (
-                [pane] if pane not in ("request", "response") else []
-            )
+            # panes *this* finding should offer: the exchange, whichever pane
+            # its evidence was found in, and the decoded views of the field it
+            # came from. Not its neighbours' — a fingerprint hit in a response
+            # header has no business sprouting a request-body #decoded tab.
+            offered = ["request", "response"]
+            for extra in [pane, *_sibling_views(f.location, panes.get(row, {}))]:
+                if extra not in offered:
+                    offered.append(extra)
+            rec["panes"] = offered
+            used.setdefault(row, set()).update(offered)
         records.append(rec)
 
     return {
