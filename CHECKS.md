@@ -108,8 +108,12 @@ tokens no detector knows about.
   `--no-entropy` disables the second pass.
 - **Limits:** `generic-secret-assignment` is deliberately noisy — it catches
   `password=` in traffic that is merely *about* passwords. The entropy pass
-  skips UUID-prefixed values and 32/40/64-character hex (almost always hashes or
-  IDs, not secrets), which also means a 32-hex API key is missed. Detecting a
+  skips UUID-prefixed values and 24/32/40/64-character hex (almost always hashes
+  or IDs, not secrets), which also means a 32-hex API key is missed. The
+  24-character case is the Mongo ObjectId: on a Mongo-backed API it was 81% of
+  all `high-entropy-string` hits and none of them were secrets. They are still
+  worth chasing, just as *enumeration* candidates — `idor_finder` classifies
+  them as `mongo-objectid` and scores them for sequencing. Detecting a
   key says nothing about whether it is live; treat every hit as needing
   revocation triage, not as confirmed compromise.
 

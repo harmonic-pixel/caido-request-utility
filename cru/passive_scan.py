@@ -534,8 +534,12 @@ class SecretScanner:
             ent = shannon_entropy(tok)
             thresh = _ENTROPY_HEX_MIN if is_hex else _ENTROPY_B64_MIN
             if ent >= thresh:
-                # 32/40/64 hex are usually hashes/IDs, not secrets -> skip
-                if is_hex and len(tok) in (32, 40, 64):
+                # 24/32/40/64 hex are usually hashes or resource IDs, not
+                # secrets -> skip. 24 is a Mongo ObjectId; those are worth
+                # keeping as *enumeration* candidates rather than secrets, and
+                # idor_finder already classifies them (`_OBJECTID_RE`, id_type
+                # "objectid") for exactly that.
+                if is_hex and len(tok) in (24, 32, 40, 64):
                     continue
                 found.append(
                     Finding(

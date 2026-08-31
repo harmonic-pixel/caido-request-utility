@@ -244,7 +244,11 @@ POSITIVE = {
 # Benign rows that must NOT trigger the given check.
 NEGATIVE = {
     "deser": dict(method="POST", body="name=John&city=Wellington"),
-    "secrets": dict(response_body='{"ok":true,"count":3}'),
+    # The ObjectId is deliberate: 24-hex resource IDs are enumeration
+    # candidates for idor_finder, not secrets, so entropy must ignore them.
+    "secrets": dict(
+        response_body='{"ok":true,"count":3,"_id":"6a951f7f1af62e63c9e34025"}'
+    ),
     "sqli": dict(query="q=coffee&sort=name&id=7", response_body="Results for coffee"),
     "ssti": dict(query="q=hello world"),
     "code": dict(query="note=please review the system before importing data"),
