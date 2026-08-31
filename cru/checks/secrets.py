@@ -143,6 +143,60 @@ def _side(label):
     return "response" if label.startswith("response") else "request"
 
 
+def entropy_tokens(text, claimed=()):
+    """(token, entropy) for the unlabelled high-entropy strings in `text`.
+
+    `claimed` is the spans a detector already named — the entropy sweep exists
+    for what has no name, and an `Authorization: Basic` credential is
+    high-entropy by nature.
+    """
+    # Anything a detector already named, plus the JWTs. A JWT is high-entropy
+    # by construction, and so is every claim value and signature inside it —
+    # including in the expanded view `field_decode` writes, which no detector
+    # matches.
+    skip = list(claimed) + [
+        m.span() for rx in (JWT_RE, JWT_DECODED_RE) for m in rx.finditer(text)
+    ]
+    for m in _B64_TOKEN.finditer(text):
+        tok = m.group(0)
+        if len(tok) < _ENTROPY_MIN_LEN or _ENTROPY_SKIP.match(tok):
+            continue
+        start, end = m.span()
+        if any(s <= start and end <= e for s, e in skip):
+            continue
+        is_hex = bool(_HEXish.match(tok))
+        ent = shannon_entropy(tok)
+        if ent < (_ENTROPY_HEX_MIN if is_hex else _ENTROPY_B64_MIN):
+            continue
+        # 24/32/40/64 hex are usually hashes or resource IDs, not secrets ->
+        # skip. 24 is a Mongo ObjectId; those are worth keeping as
+        # *enumeration* candidates rather than secrets, and idor_finder already
+        # classifies them (`_OBJECTID_RE`, id_type "objectid") for exactly that.
+        if is_hex and len(tok) in (24, 32, 40, 64):
+            continue
+        yield tok, ent
+
+
+def secret_literals(text, entropy=True):
+    """Every credential literal the detectors find in one piece of text.
+
+    What the report masks with. It has to be driven by the text about to be
+    shown rather than by a scan of the row's fields: a token that travels
+    URL-encoded reads one way in the reconstructed request and another in the
+    decoded field the checks scan, and only the first is what a reader sees.
+    """
+    claimed, found = [], set()
+    for _name, rx, _sev in _SECRET_DETECTORS:
+        for m in rx.finditer(text):
+            hit = m.group(1) if (m.groups() and m.group(1)) else m.group(0)
+            claimed.append(m.span())
+            if hit.strip():
+                found.add(hit.strip())
+    if entropy:
+        found.update(tok for tok, _ent in entropy_tokens(text, claimed))
+    return found
+
+
 class SecretScanner:
     name = "secrets"
 
@@ -150,16 +204,6 @@ class SecretScanner:
         self.entropy = entropy
 
     def run(self, rows):
-        return _dedupe(self.scan(rows))
-
-    def scan(self, rows):
-        """Every occurrence, before dedup — what the report's masking needs.
-
-        `run` collapses the occurrences that share a group: a session token
-        re-issued through a browsing session becomes one finding carrying one
-        representative's text. The report embeds whole bodies, so it has to
-        hide every sibling sitting in a pane too, not just that one.
-        """
         out = []
         for r in rows:
             # What a Basic credential on this request decodes to. Some apps put
@@ -220,47 +264,21 @@ class SecretScanner:
                 # 2) entropy pass for unlabelled high-entropy tokens
                 if self.entropy:
                     out.extend(self._entropy(r, label, text, claimed))
-        return out
+        return _dedupe(out)
 
     def _entropy(self, r, label, text, claimed=()):
-        found = []
-        # Anything a detector already named, plus the JWTs. A JWT is
-        # high-entropy by construction, and so is every claim value and
-        # signature inside it — including in the expanded view `field_decode`
-        # writes, which no detector matches.
-        skip = list(claimed) + [
-            m.span() for rx in (JWT_RE, JWT_DECODED_RE) for m in rx.finditer(text)
+        return [
+            Finding(
+                self.name,
+                "review",
+                "high-entropy-string",
+                r["host"],
+                r["method"],
+                r["path"],
+                label,
+                tok,
+                f"entropy={ent:.2f} len={len(tok)} — unlabelled, verify by hand",
+                group=f"{_side(label)}:{value_identity(tok)}",
+            )
+            for tok, ent in entropy_tokens(text, claimed)
         ]
-        for m in _B64_TOKEN.finditer(text):
-            tok = m.group(0)
-            if len(tok) < _ENTROPY_MIN_LEN or _ENTROPY_SKIP.match(tok):
-                continue
-            start, end = m.span()
-            if any(s <= start and end <= e for s, e in skip):
-                continue
-            is_hex = bool(_HEXish.match(tok))
-            ent = shannon_entropy(tok)
-            thresh = _ENTROPY_HEX_MIN if is_hex else _ENTROPY_B64_MIN
-            if ent >= thresh:
-                # 24/32/40/64 hex are usually hashes or resource IDs, not
-                # secrets -> skip. 24 is a Mongo ObjectId; those are worth
-                # keeping as *enumeration* candidates rather than secrets, and
-                # idor_finder already classifies them (`_OBJECTID_RE`, id_type
-                # "objectid") for exactly that.
-                if is_hex and len(tok) in (24, 32, 40, 64):
-                    continue
-                found.append(
-                    Finding(
-                        self.name,
-                        "review",
-                        "high-entropy-string",
-                        r["host"],
-                        r["method"],
-                        r["path"],
-                        label,
-                        tok,
-                        f"entropy={ent:.2f} len={len(tok)} — unlabelled, verify by hand",
-                        group=f"{_side(label)}:{value_identity(tok)}",
-                    )
-                )
-        return found

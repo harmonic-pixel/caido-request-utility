@@ -147,10 +147,11 @@ tokens no detector knows about.
   (`#decoded`, `#json`) are the same fact and merge.
 - **Redaction:** secret evidence is redacted for display (`redact` via
   `_present`) as `abcd…yz (44 chars)`, and masked in the report's message pane.
-  The report masks from its own detector pass over the corpus, not from what
-  this check reported, so a report built with `--skip secrets` hides just as
-  much as a full one, and every occurrence of a grouped credential is hidden
-  rather than the one the finding names.
+  The report masks from its own detector pass over each message pane, not from
+  what this check reported, so a report built with `--skip secrets` hides just
+  as much as a full one, every occurrence of a grouped credential is hidden
+  rather than the one the finding names, and a token that only the
+  reconstructed message spells out is hidden too.
   A detector's match **is** the thing that gets hidden, so each one matches the
   credential and not its surroundings: `basic-auth-header` captures the token
   and leaves `Authorization: Basic` readable, and `private-key-block` matches

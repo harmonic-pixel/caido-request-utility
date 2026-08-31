@@ -55,7 +55,7 @@ from cru import passive_scan as ps
 from cru import progress
 from cru.checks import CHECKS
 from cru.checks.base import Finding
-from cru.checks.secrets import SecretScanner
+from cru.checks.secrets import secret_literals
 
 TOOL_VERSION = "1.0"
 
@@ -282,18 +282,28 @@ def _locate(finding, rows, panes):
     return fallback, "request", None
 
 
-def _secret_values(rows):
-    """Every credential the panes must hide.
+def _pane_secrets(panes):
+    """Per row, the credentials its own panes carry.
 
-    Its own detector pass, never the run's findings. Two things went wrong when
-    the masking read those: asking for fewer checks handed out more secrets —
-    `--skip secrets`, or a `--check` naming any other single check, left every
-    token in the panes in the clear — and even a full run only knew the text of
-    one occurrence per group, so a re-issued session token stayed readable
-    beside the sibling that got masked. The panes embed whole bodies whatever
-    the user asked to scan for.
+    Its own detector pass over the text about to be shown, never the run's
+    findings. Two things went wrong when the masking read those: asking for
+    fewer checks handed out more secrets — `--skip secrets`, or a `--check`
+    naming any other single check, left every token in the panes in the clear —
+    and even a full run only knew the text of one occurrence per group, so a
+    re-issued session token stayed readable beside the sibling that got masked.
+
+    Per pane, because masking every corpus secret in every pane is quadratic:
+    2,400 secrets across 1,400 panes is 3.5M string replacements on a 565-row
+    corpus, and both numbers grow with it. Reading the pane itself is linear,
+    and it is also the only complete answer — a token that travels URL-encoded
+    reads differently in the reconstructed request than in the decoded field
+    the checks scan, so a scan of the fields does not know the text on screen.
     """
-    return {f.evidence.strip() for f in SecretScanner().scan(rows) if f.evidence}
+    return {
+        i: set().union(*(secret_literals(t) for t in row_panes.values()))
+        for i, row_panes in panes.items()
+        if row_panes
+    }
 
 
 def build_messages(rows, findings, show_secrets):
@@ -308,23 +318,30 @@ def build_messages(rows, findings, show_secrets):
     locations = [_locate(f, rows, panes) for f in findings]
 
     if not show_secrets:
-        secrets = _secret_values(rows)
-        for row_panes in panes.values():
+        by_row = _pane_secrets(panes)
+        for i, row_panes in panes.items():
+            row_secrets = by_row.get(i)
+            if not row_secrets:
+                continue
             for name, text in row_panes.items():
-                row_panes[name] = _hide(text, secrets)
+                row_panes[name] = _hide(text, row_secrets)
         # A secret can be quoted by a finding that is not a secrets finding:
         # `_present` only redacts that check, and idor_finder will treat a
         # bearer token in a hinted body parameter as an identifier, putting it
         # in `evidence` and in `ids`. Mask those the same way. Locations were
         # taken before this and the mask keeps its length, so they still hold.
+        #
+        # These read their own text the same way the panes do. An id can hold a
+        # value no pane carries — idor reads the fields, not the reconstructed
+        # message — so asking the corpus what to hide would miss it.
         for f in findings:
             if f.evidence and f.check != "secrets":
-                f.evidence = _hide(f.evidence, secrets)
+                f.evidence = _hide(f.evidence, secret_literals(f.evidence))
             # A detail can quote claim values now, and a claim can hold a token.
             if f.detail:
-                f.detail = _hide(f.detail, secrets)
+                f.detail = _hide(f.detail, secret_literals(f.detail))
             if f.ids:
-                f.ids = [_hide(i, secrets) for i in f.ids]
+                f.ids = [_hide(i, secret_literals(i)) for i in f.ids]
     return {"panes": panes, "locations": locations}
 
 

@@ -886,6 +886,28 @@ def test_report_masks_every_occurrence_not_just_the_one_reported(tmp_path, make_
     assert first not in panes and second not in panes
 
 
+def test_report_masks_a_secret_only_the_pane_spells_out(tmp_path, make_db):
+    """The panes are the text being shown, so they are what the masking reads.
+
+    A token carried URL-encoded reads one way in the reconstructed request and
+    another in the decoded field the checks scan; masking from the fields left
+    the pane's form of it in the clear.
+    """
+    from cru import report_html
+
+    token = "isAjIhKtJ0RlgLKOmxgJ+TeKdNnFRIBXuDL7DxtpYlSXp"
+    con = make_db([dict(query=f"tok={token}")])
+    db = tmp_path / "e.db"
+    disk = sqlite3.connect(str(db))
+    con.backup(disk)
+    disk.close()
+
+    _rows, _findings, messages = report_html.collect(str(db), "requests", "all", False)
+    panes = "".join(t for row in messages["panes"].values() for t in row.values())
+    assert token not in panes
+    assert "•" in panes
+
+
 def test_report_masks_secrets_when_the_secrets_check_was_skipped(tmp_path, make_db):
     """Asking for fewer checks must not hand out more secrets.
 
