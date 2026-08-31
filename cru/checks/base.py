@@ -17,6 +17,10 @@ import re
 from dataclasses import dataclass, field
 from urllib.parse import parse_qsl, unquote_plus
 
+from cru.field_decode import JWT_DECODED_RE, JWT_RE
+
+__all__ = ["JWT_DECODED_RE", "JWT_RE"]  # re-exported: one definition, in field_decode
+
 # --------------------------------------------------------------------------- #
 # Finding + field iteration
 # --------------------------------------------------------------------------- #

@@ -123,8 +123,11 @@ tokens no detector knows about.
   `--no-entropy` disables the second pass.
 - **Limits:** `generic-secret-assignment` is deliberately noisy — it catches
   `password=` in traffic that is merely *about* passwords. The entropy pass
-  skips UUID-prefixed values and 24/32/40/64-character hex (almost always hashes
-  or IDs, not secrets), which also means a 32-hex API key is missed. The
+  skips UUID-prefixed values, 24/32/40/64-character hex (almost always hashes
+  or IDs, not secrets), and anything inside a JWT — the token, its claim values
+  and its signature, in the raw form and in the decoded view — because a JWT is
+  high-entropy by construction and the `jwt` detector already reports it once.
+  The hex rule also means a 32-hex API key is missed. The
   24-character case is the Mongo ObjectId: on a Mongo-backed API it was 81% of
   all `high-entropy-string` hits and none of them were secrets. They are still
   worth chasing, just as *enumeration* candidates — `idor_finder` classifies

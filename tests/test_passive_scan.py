@@ -745,6 +745,35 @@ def test_secrets_jwt_detector_dedupes_the_same_way(run_check):
     assert tokens[0].paths == ["/a", "/b"]
 
 
+def test_entropy_ignores_what_lives_inside_a_jwt(run_check):
+    """A JWT is high-entropy by construction; the jwt detector already has it.
+
+    Both forms have to be skipped: the raw token, and the expanded
+    `{header}.{claims}.{signature}` view the decoder writes beside it.
+    """
+    token = _jwt({"sub": "42", "secret_looking_claim": "Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5"})
+    rows = [dict(body=f"token={token}")]
+
+    findings = run_check("secrets", rows)
+
+    entropy = [f for f in findings if f.signature == "high-entropy-string"]
+    assert not entropy, f"entropy reported JWT innards: {[f.evidence for f in entropy]}"
+    assert any(f.signature == "jwt" for f in findings), "the token itself is a finding"
+
+
+def test_entropy_still_reports_a_secret_beside_a_jwt(run_check):
+    """Skipping the token's span must not skip the rest of the field."""
+    token = _jwt({"sub": "42"})
+    loose = "Zm9vYmFyYmF6cXV4MTIzNDU2Nzg5YWJjZGVm"
+    rows = [dict(body=f"token={token}&other={loose}")]
+
+    findings = run_check("secrets", rows)
+
+    assert any(
+        f.signature == "high-entropy-string" and loose in f.evidence for f in findings
+    )
+
+
 def test_ungrouped_findings_still_dedupe_per_path(run_check):
     """Only grouped findings merge: everything else keeps path-level dedup."""
     rows = [

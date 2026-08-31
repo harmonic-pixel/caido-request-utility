@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import re
-
 from cru.checks.base import (
+    JWT_RE,
     _b64url_json,
     _dedupe,
     _emit,
@@ -12,8 +11,6 @@ from cru.checks.base import (
     request_inputs,
     response_text,
 )
-
-_JWT_RE = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*")
 
 
 class JwtScanner:
@@ -26,7 +23,7 @@ class JwtScanner:
             for label, text in list(request_inputs(r)) + [
                 ("response", response_text(r))
             ]:
-                for m in _JWT_RE.finditer(text):
+                for m in JWT_RE.finditer(text):
                     tok = m.group(0)
                     if tok in seen:
                         continue

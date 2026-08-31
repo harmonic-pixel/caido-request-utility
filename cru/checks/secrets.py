@@ -6,6 +6,8 @@ import re
 
 from cru.checks.base import (
     _B64_TOKEN,
+    JWT_DECODED_RE,
+    JWT_RE,
     Finding,
     _dedupe,
     iter_fields,
@@ -125,9 +127,20 @@ class SecretScanner:
 
     def _entropy(self, r, label, text):
         found = []
+        # A JWT is high-entropy by construction, and so is every claim value and
+        # the signature inside it. Reporting those as unlabelled secrets buries
+        # the report in noise that the `jwt` detector and the `jwt` check
+        # already cover as one finding. Skip the spans they occupy — in the raw
+        # token and in the expanded view `field_decode` writes for it.
+        jwt_spans = [
+            m.span() for rx in (JWT_RE, JWT_DECODED_RE) for m in rx.finditer(text)
+        ]
         for m in _B64_TOKEN.finditer(text):
             tok = m.group(0)
             if len(tok) < _ENTROPY_MIN_LEN or _ENTROPY_SKIP.match(tok):
+                continue
+            start, end = m.span()
+            if any(s <= start and end <= e for s, e in jwt_spans):
                 continue
             is_hex = bool(_HEXish.match(tok))
             ent = shannon_entropy(tok)

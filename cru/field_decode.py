@@ -34,7 +34,14 @@ _B64_RE = re.compile(r"[A-Za-z0-9+/]{16,}={0,2}|[A-Za-z0-9_-]{16,}")
 _HEX_PCT_RE = re.compile(r"(?:%[0-9A-Fa-f]{2}){6,}")
 _HEX_RUN_RE = re.compile(r"\b(?:0x)?[0-9A-Fa-f]{16,}\b")
 _PRINTABLE = re.compile(rb"[\x09\x0a\x0d\x20-\x7e]")
-_JWT_RE = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*")
+# The canonical "where are the JWTs" patterns, shared with the checks so the
+# scanner and the decoder always agree on what counts as a token.
+JWT_RE = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*")
+# The form `_jwt_view` writes: two JSON dictionaries and a signature. Greedy
+# to the last `}` on the line, anchored on the header's alg claim; a line
+# holding two expanded tokens matches as one, which is harmless — everything
+# between them is JWT either way.
+JWT_DECODED_RE = re.compile(r'\{"alg":.*\}\.[A-Za-z0-9_-]*')
 # Bound the work per field: a response can carry a great many tokens.
 _MAX_JWTS = 64
 
@@ -122,7 +129,7 @@ def _jwt_views(sources) -> list[str]:
     """Expanded views of every JWT across the field and what it decoded to."""
     out, seen = [], set()
     for src in sources:
-        for m in _JWT_RE.finditer(src):
+        for m in JWT_RE.finditer(src):
             token = m.group(0)
             if token in seen:
                 continue
