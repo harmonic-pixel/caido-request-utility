@@ -1,4 +1,5 @@
 import csv
+import json
 import sqlite3
 from base64 import b64decode
 from copy import deepcopy
@@ -113,6 +114,11 @@ def create_request_table(con: sqlite3.Connection) -> None:
     cru.schema.create_requests_table(con)
 
 
+def _body_text(body: str | dict[str, Any]) -> str:
+    """idox JSON-parses a JSON body into a dict; SQLite only binds text."""
+    return json.dumps(body) if isinstance(body, dict) else body
+
+
 def _request_row(row: tuple[Any, ...]) -> tuple[Any, ...]:
     """Turn one raw_requests row into a requests row, in BASE_COLUMNS order."""
     request_model: Request = Idox.split_request(b64decode(f"{row[5]}==").decode())
@@ -123,15 +129,15 @@ def _request_row(row: tuple[Any, ...]) -> tuple[Any, ...]:
         row[2],  # path
         row[3],  # length
         row[4],  # port
-        "; ,".join(f"{i[0]}={i[1]}" for i in request_model.cookies),
+        "; ".join(f"{i[0]}={i[1]}" for i in request_model.cookies),
         "\n".join(f"{k}: {v}" for k, v in request_model.headers.items()),
-        request_model.body,
+        _body_text(request_model.body),
         row[6],  # is_tls
         row[7],  # query
         row[8],  # created_at
         row[9],  # status code
         "\n".join(f"{k}: {v}" for k, v in response_model.headers.items()),
-        response_model.body,
+        _body_text(response_model.body),
         row[11],  # response length
         row[12],  # response created at
     )

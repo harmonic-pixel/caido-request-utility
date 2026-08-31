@@ -6,6 +6,7 @@ base64-wrapped payload is scannable without a separate migration.
 """
 
 import base64
+import csv
 import sqlite3
 
 import pytest
@@ -109,3 +110,131 @@ def test_populate_fills_decoded_columns(con):
     ).fetchone()
     assert "d=" in body
     assert _PAYLOAD in body_decoded, "wrapped payload was not decoded at import"
+
+
+def test_populate_rebuilds_the_cookie_header(con):
+    # cookies must come back as a real Cookie header value, matching what
+    # burp_to_sql stores verbatim, so the two importers agree on the column.
+    c2s.create_raw_table(con)
+    c2s.create_request_table(con)
+    raw = (
+        "GET /a HTTP/1.1\r\n"
+        "Host: app.test\r\n"
+        "Cookie: session=abc; theme=dark\r\n\r\n"
+    )
+    con.execute(
+        "INSERT INTO raw_requests (caido_request_id, host, method, path, length,"
+        " port, raw, is_tls, query, edited, created_at, response_status_code,"
+        " response_raw, response_length, response_created_at)"
+        " VALUES (1,'app.test','GET','/a',10,443,?,1,'',0,0,200,?,2,0)",
+        (_b64_field(raw), _b64_field("HTTP/1.1 200 OK\r\n\r\nok")),
+    )
+    con.commit()
+
+    c2s.populate_requests_table(con)
+
+    assert (
+        con.execute("SELECT cookies FROM requests").fetchone()[0]
+        == "session=abc; theme=dark"
+    )
+
+
+def test_populate_serialises_json_bodies(con):
+    # idox parses a JSON body into a dict, which SQLite cannot bind; the import
+    # has to re-serialise it or the whole page fails to insert.
+    c2s.create_raw_table(con)
+    c2s.create_request_table(con)
+    json_body = '{"user": "admin"}'
+    raw = (
+        "POST /a HTTP/1.1\r\n"
+        "Host: app.test\r\n"
+        "Content-Type: application/json\r\n"
+        f"Content-Length: {len(json_body)}\r\n\r\n{json_body}"
+    )
+    con.execute(
+        "INSERT INTO raw_requests (caido_request_id, host, method, path, length,"
+        " port, raw, is_tls, query, edited, created_at, response_status_code,"
+        " response_raw, response_length, response_created_at)"
+        " VALUES (1,'app.test','POST','/a',10,443,?,1,'',0,0,404,?,2,0)",
+        (
+            _b64_field(raw),
+            # A multi-word reason phrase must parse too.
+            _b64_field(
+                "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\n"
+                '\r\n{"error": "nope"}'
+            ),
+        ),
+    )
+    con.commit()
+
+    c2s.populate_requests_table(con)
+
+    body, response_body = con.execute(
+        "SELECT body, response_body FROM requests"
+    ).fetchone()
+    assert isinstance(body, str) and "admin" in body
+    assert isinstance(response_body, str) and "nope" in response_body
+
+
+# The bugs this guards against all came from fixtures being tidier than a real
+# export: a JSON body (idox hands back a dict, which SQLite cannot bind), a
+# multi-word reason phrase, and a Cookie header. It is also the only test that
+# drives the real entry point, CSV parsing included.
+def test_create_and_populate_from_a_realistic_csv(tmp_path, con):
+    rows = [
+        (
+            (
+                "GET /a HTTP/1.1\r\nHost: app.test\r\n"
+                "Cookie: session=abc; theme=dark\r\n\r\n"
+            ),
+            (
+                "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\n"
+                '\r\n{"error": "nope"}'
+            ),
+            404,
+        ),
+        (
+            (
+                "POST /b HTTP/1.1\r\nHost: app.test\r\n"
+                'Content-Type: application/json\r\n\r\n{"user": "admin"}'
+            ),
+            "HTTP/1.1 500 Internal Server Error\r\n\r\nboom",
+            500,
+        ),
+    ]
+    csv_file = tmp_path / "export.csv"
+    with open(csv_file, "w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(c2s.RAW_COLUMNS)
+        for i, (request, response, status) in enumerate(rows):
+            writer.writerow(
+                (i, "app.test", "GET", "/a", 10, 443, _b64_field(request), 1, "")
+                + (
+                    "",
+                    "",
+                    "",
+                    0,
+                    "",
+                    0,
+                    i,
+                    status,
+                    _b64_field(response),
+                    2,
+                    "",
+                    0,
+                    "",
+                    0,
+                )
+            )
+
+    c2s.create_and_populate_from_csv(con, csv_file)
+
+    imported = con.execute(
+        "SELECT cookies, body, response_status_code, response_body FROM requests"
+        " ORDER BY id"
+    ).fetchall()
+    assert len(imported) == len(rows), "a row failed to import"
+    assert imported[0][0] == "session=abc; theme=dark"
+    assert imported[0][2] == 404 and "nope" in imported[0][3]
+    assert "admin" in imported[1][1], "JSON body did not survive as text"
+    assert imported[1][2] == 500
