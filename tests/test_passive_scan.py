@@ -897,6 +897,28 @@ def test_jwt_findings_dedupe_on_decoded_content(run_check):
     assert next(f for f in hmac if len(f.paths) == 1).paths == ["GET /c"]
 
 
+def test_two_tokens_for_one_subject_are_told_apart(run_check):
+    """An access token and its refresh token share their first 60 characters.
+
+    Same header, same opening claim, so the evidence snippet is identical and
+    two findings read as one reported twice. What separates them has to be on
+    the finding.
+    """
+    rows = [
+        dict(cookies=f"a={_jwt({'username': '42', 'type': 'access', 'exp': 1})}"),
+        dict(cookies=f"r={_jwt({'username': '42', 'type': 'refresh', 'exp': 2})}"),
+    ]
+
+    findings = [f for f in run_check("jwt", rows) if f.signature == "jwt:hmac-alg"]
+
+    assert len(findings) == 2, "two credentials"
+    assert (
+        len({f.evidence for f in findings}) == 1
+    ), "the snippet cannot tell them apart"
+    assert len({f.detail for f in findings}) == 2, "so the detail must"
+    assert any("type=refresh" in f.detail for f in findings)
+
+
 def test_reissued_oidc_tokens_are_one_credential(run_check):
     """Google mints a fresh `at_hash` per refresh and changes nothing else.
 

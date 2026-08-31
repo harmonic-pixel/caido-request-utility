@@ -7,6 +7,7 @@ from cru.checks.base import (
     _b64url_json,
     _dedupe,
     _emit,
+    jwt_claims,
     jwt_identity,
     request_inputs,
     response_text,
@@ -37,6 +38,8 @@ class JwtScanner:
                     # refreshed session mints a new iat/exp and signature for
                     # the same credential. The paths merge onto the survivor.
                     ident = jwt_identity(tok)
+                    claims = jwt_claims(tok)
+                    about = f" [{claims}]" if claims else ""
                     alg = str(header.get("alg", "")).lower()
                     # Every signature quotes the token itself. What is wrong
                     # with it is a property of its header, not a string in the
@@ -53,7 +56,7 @@ class JwtScanner:
                             r,
                             label,
                             tok,
-                            "JWT alg=none — signature bypass",
+                            f"JWT alg=none — signature bypass{about}",
                             group=ident,
                         )
                     elif alg.startswith("hs"):
@@ -66,7 +69,7 @@ class JwtScanner:
                             label,
                             tok,
                             f"HMAC-signed JWT (alg={alg}) — test for weak/"
-                            "guessable signing key",
+                            f"guessable signing key{about}",
                             group=ident,
                         )
                     if len(parts) > 2 and parts[2] == "":
@@ -78,7 +81,7 @@ class JwtScanner:
                             r,
                             label,
                             tok,
-                            "JWT with empty signature segment",
+                            f"JWT with empty signature segment{about}",
                             group=ident,
                         )
                     if payload and "exp" not in payload:
@@ -90,7 +93,7 @@ class JwtScanner:
                             r,
                             label,
                             tok,
-                            "JWT without an exp claim — token never expires",
+                            f"JWT without an exp claim — token never expires{about}",
                             group=ident,
                         )
         return _dedupe(out)

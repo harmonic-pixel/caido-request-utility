@@ -275,6 +275,9 @@ def build_messages(rows, findings, show_secrets):
         for f in findings:
             if f.evidence and f.check != "secrets":
                 f.evidence = _hide(f.evidence, secrets)
+            # A detail can quote claim values now, and a claim can hold a token.
+            if f.detail:
+                f.detail = _hide(f.detail, secrets)
             if f.ids:
                 f.ids = [_hide(i, secrets) for i in f.ids]
     return {"panes": panes, "locations": locations}

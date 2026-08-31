@@ -433,7 +433,11 @@ Host-level.
   signature), and a payload with no `exp` claim (token never expires). An HMAC
   `alg` (`HS256` etc.) is noted as worth testing for a weak or guessable signing
   key.
-- **Evidence:** the token itself, in every signature. What is wrong with a JWT
+- **Evidence:** the token itself, in every signature, and the detail carries
+  the claims that make it that token. Two tokens for one subject share their
+  first 60 characters — same header, same opening claim — so the evidence
+  snippet cannot tell an access token from its refresh token, and two findings
+  read as one reported twice. What is wrong with a JWT
   is a property of its header, not a string in the traffic, so an evidence of
   `alg=hs256` left the report with a finding it could not point at; the
   description is in the detail and the token is what gets highlighted.

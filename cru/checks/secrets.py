@@ -13,6 +13,7 @@ from cru.checks.base import (
     Finding,
     _dedupe,
     iter_fields,
+    jwt_claims,
     jwt_identity,
     shannon_entropy,
     value_identity,
@@ -152,6 +153,10 @@ class SecretScanner:
                         # already a basic-auth-header finding.
                         claimed.append(m.span())
                         detail = "matched detector pattern"
+                        if name == "jwt":
+                            claims = jwt_claims(hit)
+                            if claims:
+                                detail = f"matched detector pattern [{claims}]"
                         if name == "basic-auth-header":
                             credential = _basic_credential(m.group(0))
                             if JWT_RE.search(credential):

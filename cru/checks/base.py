@@ -415,6 +415,26 @@ def _b64url_json(seg):
         return None
 
 
+def jwt_claims(token, limit=90):
+    """The claims that make a token what it is, compact enough for a detail line.
+
+    Two tokens for one subject can be identical for the first 60 characters —
+    same header, same opening claims — so the evidence snippet cannot tell them
+    apart. What separates them (a `type` of access vs refresh, an audience, a
+    scope) sits further in, and without it the report shows two findings that
+    look like one reported twice.
+    """
+    parts = token.split(".")
+    payload = _b64url_json(parts[1]) if len(parts) > 1 else None
+    if not isinstance(payload, dict):
+        return ""
+    claims = {k: v for k, v in payload.items() if k not in _JWT_VOLATILE_CLAIMS}
+    if not claims:
+        return ""
+    text = ", ".join(f"{k}={v}" for k, v in claims.items())
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
 def _emit(
     out, check, sev, sig, r, location, evidence, detail, host_level=False, group=None
 ):
