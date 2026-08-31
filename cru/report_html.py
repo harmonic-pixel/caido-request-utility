@@ -614,10 +614,14 @@ _TEMPLATE = r"""<!DOCTYPE html>
     // group by host
     var byHost={};
     shown.forEach(function(f){(byHost[f.host]=byHost[f.host]||[]).push(f);});
+    // One host: there is nothing to choose between, so show its findings. More
+    // than one: open them all and the list is a wall you have to scroll past to
+    // find the host you came for.
+    var openByDefault=Object.keys(byHost).length===1;
     Object.keys(byHost).sort().forEach(function(h){
       var items=byHost[h].sort(function(a,b){
         return a.check.localeCompare(b.check)||a.path.localeCompare(b.path);});
-      var host=el("div","host open");
+      var host=el("div","host"+(openByDefault?" open":""));
       var hd=el("div","host-hd");
       hd.appendChild(el("span","caret","▶"));
       hd.appendChild(el("span","host-name",h||"(host-level)"));

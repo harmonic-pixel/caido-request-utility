@@ -70,6 +70,10 @@ candidate seen with a single distinct ID — with nothing to enumerate and nothi
 to compare, that is not a lead (`--min-distinct 1` puts them back). A short list you can act on
 beats a long one you have to sift.
 
+Findings are grouped by host. A corpus with one host opens expanded; with
+several, the groups start closed — and narrowing to a single host, by filter or
+by search, expands it again.
+
 In the report, an IDOR candidate lists every ID it was observed with in its own
 dropdown, the way a deduplicated finding lists its paths. A finding's rule name
 links to the source of the check that raised it, so "why did this fire?" is one
